@@ -1,0 +1,235 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum TeamMemberRole {
+  CAPTAIN
+  PLAYER
+  SUBSTITUTE
+}
+
+enum TournamentFormat {
+  BATTLE_ROYALE
+  CLASH_SQUAD
+}
+
+enum TeamMode {
+  SOLO
+  DUO
+  SQUAD
+}
+
+enum TournamentStatus {
+  DRAFT
+  UPCOMING
+  REGISTRATION_OPEN
+  REGISTRATION_CLOSED
+  LIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum RegistrationStatus {
+  CONFIRMED
+  CANCELLED
+  DISQUALIFIED
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LIVE
+  COMPLETED
+}
+
+model User {
+  id         String   @id @default(cuid())
+  name       String
+  email      String   @unique
+  profilePic String?  @map("profile_pic")
+  googleId   String?  @unique @map("google_id")
+  role       UserRole @default(USER)
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  gameProfiles           GameProfile[]
+  captainTeams           Team[]                   @relation("CaptainTeams")
+  teamMemberships        TeamMember[]
+  createdTournaments     Tournament[]             @relation("CreatedTournaments")
+  tournamentRegistrations TournamentRegistration[]
+
+  @@map("users")
+}
+
+model AppConfig {
+  id                 Int     @id @default(1)
+  minVersion         String  @map("min_version")
+  latestVersion      String  @map("latest_version")
+  isMaintenance      Boolean @default(false) @map("is_maintenance")
+  maintenanceMessage String  @map("maintenance_message")
+  updateUrl          String  @map("update_url")
+
+  @@map("app_config")
+}
+
+model Game {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  gameProfiles GameProfile[]
+  teams        Team[]
+  tournaments  Tournament[]
+
+  @@map("games")
+}
+
+model GameProfile {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  gameId     String   @map("game_id")
+  inGameUid  String   @map("in_game_uid")
+  inGameName String   @map("in_game_name")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, gameId], name: "unique_user_game")
+  @@unique([gameId, inGameUid], name: "unique_game_uid")
+  @@map("game_profiles")
+}
+
+model Team {
+  id         String   @id @default(cuid())
+  gameId     String   @map("game_id")
+  name       String
+  tag        String
+  logoUrl    String?  @map("logo_url")
+  captainId  String   @map("captain_id")
+  inviteCode String   @unique @map("invite_code")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  game      Game                     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  captain   User                     @relation("CaptainTeams", fields: [captainId], references: [id], onDelete: Restrict)
+  members   TeamMember[]
+  registrations TournamentRegistration[]
+
+  @@unique([gameId, name], name: "unique_game_team_name")
+  @@map("teams")
+}
+
+model TeamMember {
+  id       String         @id @default(cuid())
+  teamId   String         @map("team_id")
+  userId   String         @map("user_id")
+  role     TeamMemberRole @default(PLAYER)
+  joinedAt DateTime       @default(now()) @map("joined_at")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId], name: "unique_team_user")
+  @@map("team_members")
+}
+
+model Tournament {
+  id                   String           @id @default(cuid())
+  gameId               String           @map("game_id")
+  title                String
+  description          String?
+  bannerUrl            String?          @map("banner_url")
+  format               TournamentFormat
+  teamMode             TeamMode         @map("team_mode")
+  map                  String
+  maxSlots             Int              @map("max_slots")
+  registeredCount      Int              @default(0) @map("registered_count")
+  entryFee             Int              @default(0) @map("entry_fee")
+  prizePool            Int              @default(0) @map("prize_pool")
+  prizeDistribution    Json?            @map("prize_distribution")
+  rules                Json?
+  registrationOpensAt  DateTime         @map("registration_opens_at")
+  registrationClosesAt DateTime         @map("registration_closes_at")
+  startsAt             DateTime         @map("starts_at")
+  status               TournamentStatus @default(DRAFT)
+  roomId               String?          @map("room_id")
+  roomPassword         String?          @map("room_password")
+  roomReleasedAt       DateTime?        @map("room_released_at")
+  createdBy            String           @map("created_by")
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+
+  game          Game                     @relation(fields: [gameId], references: [id], onDelete: Restrict)
+  creator       User                     @relation("CreatedTournaments", fields: [createdBy], references: [id], onDelete: Restrict)
+  registrations TournamentRegistration[]
+  matches       Match[]
+
+  @@index([gameId, status, startsAt])
+  @@map("tournaments")
+}
+
+model TournamentRegistration {
+  id           String             @id @default(cuid())
+  tournamentId String             @map("tournament_id")
+  userId       String             @map("user_id")
+  teamId       String?            @map("team_id")
+  status       RegistrationStatus @default(CONFIRMED)
+  slotNumber   Int                @map("slot_number")
+  finalRank    Int?               @map("final_rank")
+  createdAt    DateTime           @default(now()) @map("created_at")
+
+  tournament   Tournament         @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team         Team?              @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  matchResults MatchResult[]
+
+  @@unique([tournamentId, userId], name: "unique_tournament_user")
+  @@unique([tournamentId, teamId], name: "unique_tournament_team")
+  @@map("tournament_registrations")
+}
+
+model Match {
+  id           String      @id @default(cuid())
+  tournamentId String      @map("tournament_id")
+  matchNumber  Int         @map("match_number")
+  map          String
+  status       MatchStatus @default(SCHEDULED)
+  scheduledAt  DateTime    @map("scheduled_at")
+  createdAt    DateTime    @default(now()) @map("created_at")
+
+  tournament Tournament    @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  results    MatchResult[]
+
+  @@unique([tournamentId, matchNumber], name: "unique_tournament_match_number")
+  @@map("matches")
+}
+
+model MatchResult {
+  id              String   @id @default(cuid())
+  matchId         String   @map("match_id")
+  registrationId  String   @map("registration_id")
+  placement       Int
+  kills           Int      @default(0)
+  placementPoints Int      @default(0) @map("placement_points")
+  killPoints      Int      @default(0) @map("kill_points")
+  totalPoints     Int      @default(0) @map("total_points")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  match        Match                  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  registration TournamentRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, registrationId], name: "unique_match_registration")
+  @@map("match_results")
+}

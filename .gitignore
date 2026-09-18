@@ -1,6 +1,24 @@
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies
 node_modules/
 .npm-cache/
+
+# Production & Build outputs
 dist/
+build/
+
+# Coverage & Tests
 coverage/
-.env
 *.log
+check-connection.js
+test-*.js
+
+# IDE & OS Junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
