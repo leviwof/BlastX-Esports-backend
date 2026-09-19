@@ -50,7 +50,8 @@ COPY --from=build --chown=nestjs:nodejs /app/dist ./dist
 COPY --chown=nestjs:nodejs package.json prisma.config.ts ./
 USER nestjs
 EXPOSE 3000
-# Migrations run first, but a failure must NOT stop the API from starting: with no
-# listening process Railway answers every request with 502 and the real reason stays
-# invisible. Starting anyway keeps the logs (and /health) honest.
-CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy || echo 'WARN: prisma migrate deploy failed - starting API anyway so /health can report the state'; exec node dist/main.js"]
+# Startup does exactly one thing: serve. Migrations are run explicitly
+# (`npm run db:migrate`) because `migrate deploy` at boot can hang against
+# Supabase's transaction pooler (:6543) — and a hung step means nothing ever
+# listens, which the edge reports as an opaque 502.
+CMD ["node", "dist/main.js"]
