@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { ResponseInterceptor } from './common/response.interceptor';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
+import { getBuildInfo } from './common/build-info';
 import { PrismaService } from './prisma/prisma.service';
 
 async function bootstrap(): Promise<void> {
@@ -19,6 +20,11 @@ async function bootstrap(): Promise<void> {
     logger.error(`Uncaught exception: ${err.stack ?? err.message}`);
     process.exit(1);
   });
+
+  const build = getBuildInfo();
+  logger.log(
+    `Starting build ${build.commit}${build.branch ? ` (${build.branch})` : ''} built ${build.builtAt ?? 'n/a'} on ${process.version}`,
+  );
 
   const app = await NestFactory.create(AppModule);
   app.use(helmet());

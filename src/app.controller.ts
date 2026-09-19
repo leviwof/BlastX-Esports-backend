@@ -1,5 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { AppService } from './app.service';
+import { getBuildInfo } from './common/build-info';
 
 @Controller()
 export class AppController {
@@ -7,8 +8,12 @@ export class AppController {
 
   // Railway probes this path directly (no global prefix).
   @Get('health')
-  health(): { healthy: boolean; uptime: number } {
-    return { healthy: true, uptime: process.uptime() };
+  health(): { healthy: boolean; uptime: number; commit: string } {
+    return {
+      healthy: true,
+      uptime: process.uptime(),
+      commit: getBuildInfo().commit,
+    };
   }
 
   @Get()

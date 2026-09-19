@@ -5,8 +5,8 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "build": "prisma generate && nest build && node scripts/cleanup-dist.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "prisma generate && nest build && node scripts/write-build-info.js && node scripts/cleanup-dist.js",
+    "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",

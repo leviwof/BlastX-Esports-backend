@@ -12,7 +12,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json package-lock.json tsconfig.json tsconfig.build.json nest-cli.json prisma.config.ts ./
 COPY prisma ./prisma
 COPY src ./src
-RUN npx prisma generate && npx nest build
+COPY scripts ./scripts
+RUN npm run build
 
 # ---------- prune: keep production deps only ----------
 FROM node:22-alpine AS prod-deps
