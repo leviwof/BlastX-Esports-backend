@@ -20,9 +20,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private lastFailure: string | null = null;
 
   async onModuleInit(): Promise<void> {
-    console.log('[DIAG] PrismaService.onModuleInit() START');
     await this.tryConnect();
-    console.log(`[DIAG] PrismaService.onModuleInit() DONE (connected=${this.connected})`);
     if (!this.connected) this.scheduleRetry();
   }
 
@@ -36,16 +34,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   private async tryConnect(): Promise<void> {
     try {
-      console.log('[DIAG] Prisma.$connect() START...');
       await this.$connect();
-      console.log('[DIAG] Prisma.$connect() SUCCESS');
       if (!this.connected) this.logger.log('Database connection established');
       this.connected = true;
       this.lastFailure = null;
       healthStatus.db = true;
       healthStatus.dbError = null;
     } catch (err) {
-      console.error('[DIAG] Prisma.$connect() FAILED:', err instanceof Error ? err.message : String(err));
       this.connected = false;
       this.lastFailure = err instanceof Error ? err.message : String(err);
       healthStatus.db = false;

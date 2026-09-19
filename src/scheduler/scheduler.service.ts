@@ -20,10 +20,8 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    console.log('[DIAG] SchedulerService.onModuleInit() START');
     const redisUrl = this.config.get<string>('REDIS_URL') || 'redis://localhost:6379';
     const redisAvailable = await this.checkRedisConnection(redisUrl);
-    console.log(`[DIAG] SchedulerService Redis check done: available=${redisAvailable}`);
 
     if (redisAvailable) {
       try {
@@ -66,7 +64,6 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
 
     // Initial lifecycle check
     void this.checkAndRunLifecycle();
-    console.log('[DIAG] SchedulerService.onModuleInit() DONE');
   }
 
   onModuleDestroy(): Promise<void> {

@@ -10,30 +10,23 @@ import { PrismaService } from './prisma/prisma.service';
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
 
-  console.log('[DIAG] bootstrap() entered');
-
   // Diagnostics: surface unhandled rejections instead of dying silently.
   process.on('unhandledRejection', (reason: unknown) => {
-    console.error('[DIAG] unhandledRejection:', reason instanceof Error ? reason.stack : String(reason));
     logger.error(
       `Unhandled promise rejection: ${reason instanceof Error ? reason.stack : String(reason)}`,
     );
   });
   process.on('uncaughtException', (err: Error) => {
-    console.error('[DIAG] uncaughtException:', err.stack ?? err.message);
     logger.error(`Uncaught exception: ${err.stack ?? err.message}`);
     process.exit(1);
   });
 
   const build = getBuildInfo();
-  console.log(`[DIAG] build info loaded: ${build.commit}`);
   logger.log(
     `Starting build ${build.commit}${build.branch ? ` (${build.branch})` : ''} built ${build.builtAt ?? 'n/a'} on ${process.version}`,
   );
 
-  console.log('[DIAG] calling NestFactory.create(AppModule)...');
   const app = await NestFactory.create(AppModule);
-  console.log('[DIAG] NestFactory.create() DONE');
 
   app.use(helmet());
   app.enableCors({ origin: true, credentials: true });
@@ -47,9 +40,7 @@ async function bootstrap(): Promise<void> {
 
   // Railway (and most PaaS) inject PORT; it is NOT prefixed with the global prefix.
   const port = Number(process.env.PORT) || 3000;
-  console.log(`[DIAG] calling app.listen(${port}, '0.0.0.0')...`);
   await app.listen(port, '0.0.0.0');
-  console.log(`[DIAG] app.listen() DONE - server is up on port ${port}`);
   logger.log(
     `BlastX Esports API listening on 0.0.0.0:${port} (PORT env=${process.env.PORT ?? 'unset'}, NODE_ENV=${process.env.NODE_ENV ?? 'development'})`,
   );
