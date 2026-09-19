@@ -46,11 +46,11 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
           // Suppress noise when connection drops
         });
 
-        await (this.tournamentQueue as any).add(
-          'check-lifecycle',
-          {},
-          { repeat: { every: 60000 } },
-        );
+        // Idempotent job scheduler: a fixed ID is upserted (never duplicated), so
+        // redeploys cannot accumulate repeatable jobs. Handles Redis offline at boot.
+        await this.tournamentQueue.upsertJobScheduler('lifecycle-every-minute', {
+          every: 60_000,
+        });
         this.logger.log('BullMQ tournament lifecycle scheduler initialized with Redis');
       } catch (err: any) {
         this.logger.warn(`BullMQ initialization skipped: ${err.message}`);
@@ -66,10 +66,20 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     void this.checkAndRunLifecycle();
   }
 
-  onModuleDestroy(): void {
+  onModuleDestroy(): Promise<void> {
     if (this.intervalId) {
       clearInterval(this.intervalId);
     }
+    return (async () => {
+      if (this.tournamentWorker) {
+        await this.tournamentWorker.close();
+        this.tournamentWorker = undefined;
+      }
+      if (this.tournamentQueue) {
+        await this.tournamentQueue.close();
+        this.tournamentQueue = undefined;
+      }
+    })();
   }
 
   private checkRedisConnection(redisUrl: string): Promise<boolean> {
