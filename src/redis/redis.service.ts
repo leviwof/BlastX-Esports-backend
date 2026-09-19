@@ -10,12 +10,14 @@ export class RedisService implements OnModuleDestroy {
   private lastLoggedErrorTime = 0;
 
   constructor(config: ConfigService) {
+    console.log('[DIAG] RedisService constructor START');
     this.client = new Redis(config.getOrThrow<string>('REDIS_URL'), {
       maxRetriesPerRequest: 2,
       retryStrategy(times) {
         return Math.min(times * 2000, 10000);
       },
     });
+    console.log('[DIAG] RedisService constructor DONE (ioredis client created)');
 
     this.client.on('ready', () => {
       healthStatus.redis = true;
