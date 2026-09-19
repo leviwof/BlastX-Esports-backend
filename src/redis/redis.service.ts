@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
+import { healthStatus } from '../common/health-status';
 
 @Injectable()
 export class RedisService implements OnModuleDestroy {
@@ -16,7 +17,17 @@ export class RedisService implements OnModuleDestroy {
       },
     });
 
+    this.client.on('ready', () => {
+      healthStatus.redis = true;
+      this.logger.log('Redis connection ready');
+    });
+
+    this.client.on('end', () => {
+      healthStatus.redis = false;
+    });
+
     this.client.on('error', (err) => {
+      healthStatus.redis = false;
       const now = Date.now();
       // Log warning at most once per 60 seconds to prevent console spam when local Redis is offline
       if (now - this.lastLoggedErrorTime > 60000) {

@@ -50,4 +50,7 @@ COPY --from=build --chown=nestjs:nodejs /app/dist ./dist
 COPY --chown=nestjs:nodejs package.json prisma.config.ts ./
 USER nestjs
 EXPOSE 3000
-CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy && node dist/main.js"]
+# Migrations run first, but a failure must NOT stop the API from starting: with no
+# listening process Railway answers every request with 502 and the real reason stays
+# invisible. Starting anyway keeps the logs (and /health) honest.
+CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy || echo 'WARN: prisma migrate deploy failed - starting API anyway so /health can report the state'; exec node dist/main.js"]
