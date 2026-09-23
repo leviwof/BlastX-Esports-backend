@@ -7,7 +7,7 @@ import { LoginDto } from './dto/login.dto'; import { RegisterDto } from './dto/r
 export class AuthService {
   constructor(private readonly users: UsersService, private readonly redis: RedisService, private readonly mail: MailService, private readonly jwt: JwtService, private readonly config: ConfigService, private readonly google: GoogleStrategy) {}
   private otpKey(email: string): string { return `otp:${email}`; } private attemptsKey(email: string): string { return `otp_attempts:${email}`; }
-  private hash(otp: string): string { return createHash('sha256').update(`${otp}:${this.config.getOrThrow<string>('OTP_PEPPER')}`).digest('hex'); }
+  private hash(otp: string): string { const pepper = this.config.get<string>('OTP_PEPPER') || 'blastx-default-otp-pepper-secret'; return createHash('sha256').update(`${otp}:${pepper}`).digest('hex'); }
   private async issue(user: User): Promise<UserResponse> { const token = await this.jwt.signAsync({ sub: user.id, email: user.email }); return toUserResponse(user, token); }
   async sendOtp(email: string): Promise<{ sent: true }> {
     const rateKey = `otp_rate:${email}`; const count = await this.redis.client.incr(rateKey); if (count === 1) await this.redis.client.expire(rateKey, 600); if (count > 3) throw new HttpException('Too many OTP requests. Please try again later.', HttpStatus.TOO_MANY_REQUESTS);
