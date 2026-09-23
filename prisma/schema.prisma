@@ -120,6 +120,7 @@ model Team {
   logoUrl    String?  @map("logo_url")
   captainId  String   @map("captain_id")
   inviteCode String   @unique @map("invite_code")
+  acceptingSubstitutes Boolean @default(true) @map("accepting_substitutes")
   createdAt  DateTime @default(now()) @map("created_at")
 
   game      Game                     @relation(fields: [gameId], references: [id], onDelete: Cascade)

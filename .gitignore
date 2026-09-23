@@ -22,3 +22,5 @@ test-*.js
 Thumbs.db
 .vscode/
 .idea/
+.claude/
+.freebuff/

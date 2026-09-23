@@ -15,16 +15,21 @@ import {
   Tournament,
   TournamentRegistration,
   Team,
+  TeamMember,
+  TeamMemberRole,
   User,
 } from '@prisma/client';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import { FilterTournamentQueryDto } from './dto/filter-tournament.dto';
 import { RegisterTournamentDto } from './dto/register-tournament.dto';
+import { CreateTournamentTeamDto } from './dto/create-tournament-team.dto';
 import { SetRoomCredentialsDto } from './dto/set-room.dto';
 import { DisqualifyRegistrationDto } from './dto/disqualify.dto';
 import { validateStatusTransition } from './tournament-state-machine';
 import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
+import { toTeamResponse } from '../teams/team.mapper';
+import { randomBytes } from 'crypto';
 
 @Injectable()
 export class TournamentsService {
@@ -493,4 +498,238 @@ export class TournamentsService {
     }
     return tournament;
   }
+
+  async getMyTeamForTournament(userId: string, tournamentId: string) {
+    await this.getTournamentEntity(tournamentId);
+
+    const userMemberships = await this.prisma.teamMember.findMany({
+      where: { userId },
+      select: { teamId: true },
+    });
+    const teamIds = userMemberships.map((m) => m.teamId);
+
+    const registration = await this.prisma.tournamentRegistration.findFirst({
+      where: {
+        tournamentId,
+        status: RegistrationStatus.CONFIRMED,
+        OR: [
+          { userId, teamId: { not: null } },
+          ...(teamIds.length > 0 ? [{ teamId: { in: teamIds } }] : []),
+        ],
+      },
+      include: {
+        team: {
+          include: {
+            captain: true,
+            members: {
+              include: {
+                user: {
+                  include: { gameProfiles: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!registration || !registration.team) {
+      return null;
+    }
+
+    return {
+      ...toTeamResponse(registration.team as any),
+      tournament_id: tournamentId,
+      slot_number: registration.slotNumber,
+      registration_status: registration.status,
+    };
+  }
+
+  async createTournamentTeam(userId: string, tournamentId: string, dto: CreateTournamentTeamDto) {
+    const tournament = await this.getTournamentEntity(tournamentId);
+
+    if (tournament.status !== TournamentStatus.REGISTRATION_OPEN) {
+      throw new BadRequestException(`Tournament is not open for registration (status is ${tournament.status})`);
+    }
+
+    const now = new Date();
+    if (now < tournament.registrationOpensAt || now > tournament.registrationClosesAt) {
+      throw new BadRequestException('Tournament registration window is currently closed');
+    }
+
+    // Check capacity
+    const currentCount = await this.prisma.tournamentRegistration.count({
+      where: { tournamentId, status: RegistrationStatus.CONFIRMED },
+    });
+    if (currentCount >= tournament.maxSlots) {
+      throw new BadRequestException('Tournament is already full');
+    }
+
+    // Must have Game Profile for tournament's game
+    const profile = await this.prisma.gameProfile.findUnique({
+      where: { unique_user_game: { userId, gameId: tournament.gameId } },
+    });
+    if (!profile) {
+      throw new BadRequestException('You must set up your Free Fire game profile before creating a team');
+    }
+
+    // Verify user is not already registered in this tournament
+    const userTeams = await this.prisma.teamMember.findMany({
+      where: { userId },
+      select: { teamId: true },
+    });
+    const teamIds = userTeams.map((t) => t.teamId);
+
+    const existingReg = await this.prisma.tournamentRegistration.findFirst({
+      where: {
+        tournamentId,
+        status: RegistrationStatus.CONFIRMED,
+        OR: [
+          { userId },
+          ...(teamIds.length > 0 ? [{ teamId: { in: teamIds } }] : []),
+        ],
+      },
+    });
+    if (existingReg) {
+      throw new BadRequestException('You are already registered or part of a team in this tournament');
+    }
+
+    // Team name uniqueness per game
+    const existingName = await this.prisma.team.findFirst({
+      where: {
+        gameId: tournament.gameId,
+        name: { equals: dto.name, mode: 'insensitive' },
+      },
+    });
+    if (existingName) {
+      throw new BadRequestException(`Team name '${dto.name}' is already taken for this game`);
+    }
+
+    let inviteCode = randomBytes(4).toString('hex').toUpperCase();
+    while (await this.prisma.team.findUnique({ where: { inviteCode } })) {
+      inviteCode = randomBytes(4).toString('hex').toUpperCase();
+    }
+
+    const maxSlot = await this.prisma.tournamentRegistration.aggregate({
+      where: { tournamentId },
+      _max: { slotNumber: true },
+    });
+    const nextSlot = (maxSlot._max.slotNumber || 0) + 1;
+
+    const team = await this.prisma.$transaction(async (tx) => {
+      const createdTeam = await tx.team.create({
+        data: {
+          gameId: tournament.gameId,
+          name: dto.name,
+          tag: dto.tag.toUpperCase(),
+          logoUrl: dto.logo_url,
+          acceptingSubstitutes: dto.accepting_substitutes ?? true,
+          captainId: userId,
+          inviteCode,
+          members: {
+            create: {
+              userId,
+              role: TeamMemberRole.CAPTAIN,
+            },
+          },
+        },
+        include: {
+          captain: true,
+          members: {
+            include: {
+              user: {
+                include: { gameProfiles: true },
+              },
+            },
+          },
+        },
+      });
+
+      await tx.tournamentRegistration.create({
+        data: {
+          tournamentId,
+          userId,
+          teamId: createdTeam.id,
+          status: RegistrationStatus.CONFIRMED,
+          slotNumber: nextSlot,
+        },
+      });
+
+      await tx.tournament.update({
+        where: { id: tournamentId },
+        data: { registeredCount: { increment: 1 } },
+      });
+
+      return createdTeam;
+    });
+
+    return {
+      ...toTeamResponse(team as any),
+      tournament_id: tournamentId,
+      slot_number: nextSlot,
+      registration_status: RegistrationStatus.CONFIRMED,
+    };
+  }
+
+  async previewTeamByCode(tournamentId: string, inviteCode: string, currentUserId?: string) {
+    const tournament = await this.getTournamentEntity(tournamentId);
+
+    const team = await this.prisma.team.findFirst({
+      where: {
+        inviteCode: { equals: inviteCode, mode: 'insensitive' },
+        gameId: tournament.gameId,
+      },
+      include: {
+        captain: true,
+        members: {
+          include: {
+            user: {
+              include: { gameProfiles: true },
+            },
+          },
+        },
+      },
+    });
+    if (!team) {
+      throw new NotFoundException('No team found matching this invite code for this tournament');
+    }
+
+    const registration = await this.prisma.tournamentRegistration.findUnique({
+      where: {
+        unique_tournament_team: {
+          tournamentId,
+          teamId: team.id,
+        },
+      },
+    });
+
+    const mainCount = team.members.filter((m) => m.role !== TeamMemberRole.SUBSTITUTE).length;
+    const subCount = team.members.filter((m) => m.role === TeamMemberRole.SUBSTITUTE).length;
+    const maxMain = tournament.teamMode === TeamMode.DUO ? 2 : 4;
+    const maxSub = 1;
+
+    const isAlreadyMember = currentUserId ? team.members.some((m) => m.userId === currentUserId) : false;
+    const canJoinMain = mainCount < maxMain && !isAlreadyMember;
+    const canJoinSub = (team.acceptingSubstitutes ?? true) && subCount < maxSub && !isAlreadyMember;
+    const isFull = !canJoinMain && !canJoinSub;
+
+    return {
+      ...toTeamResponse(team as any),
+      tournament_id: tournamentId,
+      is_registered_in_tournament: !!registration,
+      slot_number: registration?.slotNumber ?? null,
+      roster_info: {
+        main_players_count: mainCount,
+        max_main_players: maxMain,
+        substitute_count: subCount,
+        max_substitutes: maxSub,
+        accepting_substitutes: team.acceptingSubstitutes ?? true,
+        is_already_member: isAlreadyMember,
+        can_join_main: canJoinMain,
+        can_join_substitute: canJoinSub,
+        is_full: isFull,
+      },
+    };
+  }
 }
+

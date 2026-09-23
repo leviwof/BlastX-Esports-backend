@@ -132,16 +132,24 @@ Emails are normalised server-side (`trim` + lowercase), so send them as typed.
 | `GET` | `/v1/users/me/game-profile?game_slug=free_fire` | In-game identity |
 | `PUT` | `/v1/users/me/game-profile` | `{ game_slug, in_game_uid, in_game_name }` — UID must be **8–12 digits** |
 | `GET` | `/v1/tournaments/me` | My joined tournaments |
+| `GET` | `/v1/tournaments/:id/my-team` | User's registered team for this tournament (or `null`) |
+| `POST` | `/v1/tournaments/:id/teams` | Create new team for tournament (`{ name, tag, logo_url?, accepting_substitutes? }`) and register slot |
+| `GET` | `/v1/tournaments/:id/teams/code/:code` | Search / preview team by invite code before joining (returns roster & slot availability) |
 | `POST` | `/v1/tournaments/:id/register` | `{ team_id? }` — send `{}` for solo; `team_id` for squad modes |
 | `DELETE` | `/v1/tournaments/:id/register` | Leave a tournament |
 | `GET` | `/v1/tournaments/:id/room` | Room credentials. Returns **403** `"You must be registered in this tournament…"` if not registered, or **403** `"Room credentials have not been released yet…"` until the release window (`ROOM_RELEASE_MINUTES`, default 15, before `starts_at`) |
-| `POST` | `/v1/teams` | `{ name, tag, game_slug?, logo_url? }` — `tag` = 2–5 alphanumeric |
+| `POST` | `/v1/teams` | `{ name, tag, game_slug?, logo_url?, accepting_substitutes? }` — `tag` = 2–5 alphanumeric |
 | `GET` | `/v1/teams/me` | My teams |
 | `GET` | `/v1/teams/:id` | Team detail incl. members |
 | `POST` | `/v1/teams/join` | `{ invite_code }` |
+| `POST` | `/v1/teams/:id/join` | Join specific team (`{ invite_code?, as_substitute? }`) |
+| `POST` | `/v1/teams/:id/leave` | Leave team (member only; captain must transfer first) |
+| `POST` | `/v1/teams/:id/members/:userId` | Captain removes a member |
+| `DELETE` | `/v1/teams/:id/members/:userId` | Captain removes a member; a member passes their **own** id to leave |
+| `POST` | `/v1/teams/:id/transfer-captain` | `{ new_captain_id }` — Transfer captaincy |
+| `PATCH` | `/v1/teams/:id/substitutes` | `{ accepting_substitutes }` — Toggle substitute acceptance |
 | `PATCH` | `/v1/teams/:id` | `{ name?, tag?, logo_url? }` (captain only) |
 | `POST` | `/v1/teams/:id/regenerate-invite` | Captain only |
-| `DELETE` | `/v1/teams/:id/members/:userId` | Captain removes a member; a member passes their **own** id to leave |
 
 ### Admin (role `ADMIN`)
 

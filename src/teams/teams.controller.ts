@@ -5,6 +5,8 @@ import { CurrentUser, JwtUser } from '../common/current-user.decorator';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
 import { JoinTeamDto } from './dto/join-team.dto';
+import { SubstitutesToggleDto } from './dto/substitutes-toggle.dto';
+import { TransferCaptainDto } from './dto/transfer-captain.dto';
 import { toTeamResponse, TeamResponse } from './team.mapper';
 
 @Controller('teams')
@@ -36,13 +38,61 @@ export class TeamsController {
     return toTeamResponse(team);
   }
 
+  @Post(':id/join')
+  async joinTeamById(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: JoinTeamDto,
+  ): Promise<TeamResponse> {
+    const team = await this.teamsService.joinTeam(user.sub, dto, id);
+    return toTeamResponse(team);
+  }
+
+  @Post(':id/leave')
+  async leaveTeam(@CurrentUser() user: JwtUser, @Param('id') id: string): Promise<{ message: string }> {
+    return this.teamsService.leaveTeam(user.sub, id);
+  }
+
+  @Post(':id/members/:userId')
+  async removeMemberPost(
+    @CurrentUser() user: JwtUser,
+    @Param('id') teamId: string,
+    @Param('userId') targetUserId: string,
+  ): Promise<{ message: string }> {
+    return this.teamsService.removeMember(user.sub, teamId, targetUserId);
+  }
+
   @Delete(':id/members/:userId')
-  async removeMember(
+  async removeMemberDelete(
     @CurrentUser() user: JwtUser,
     @Param('id') teamId: string,
     @Param('userId') targetUserId: string,
   ): Promise<{ message: string }> {
     return this.teamsService.removeMemberOrLeave(user.sub, teamId, targetUserId);
+  }
+
+  @Post(':id/transfer-captain')
+  async transferCaptain(
+    @CurrentUser() user: JwtUser,
+    @Param('id') teamId: string,
+    @Body() dto: TransferCaptainDto,
+  ): Promise<TeamResponse> {
+    const targetUserId = dto.new_captain_id || dto.user_id;
+    if (!targetUserId) {
+      throw new Error('Target new_captain_id is required');
+    }
+    const team = await this.teamsService.transferCaptaincy(user.sub, teamId, targetUserId);
+    return toTeamResponse(team);
+  }
+
+  @Patch(':id/substitutes')
+  async toggleSubstitutes(
+    @CurrentUser() user: JwtUser,
+    @Param('id') teamId: string,
+    @Body() dto: SubstitutesToggleDto,
+  ): Promise<TeamResponse> {
+    const team = await this.teamsService.toggleSubstitutes(user.sub, teamId, dto.accepting_substitutes);
+    return toTeamResponse(team);
   }
 
   @Post(':id/regenerate-invite')

@@ -1,7 +1,16 @@
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString } from 'class-validator';
+import { TeamMemberRole } from '@prisma/client';
 
 export class JoinTeamDto {
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  invite_code!: string;
+  invite_code?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  as_substitute?: boolean;
+
+  @IsOptional()
+  @IsEnum(TeamMemberRole)
+  role?: TeamMemberRole;
 }

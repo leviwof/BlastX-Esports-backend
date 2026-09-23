@@ -5,6 +5,7 @@ import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { CurrentUser, JwtUser } from '../common/current-user.decorator';
 import { FilterTournamentQueryDto } from './dto/filter-tournament.dto';
 import { RegisterTournamentDto } from './dto/register-tournament.dto';
+import { CreateTournamentTeamDto } from './dto/create-tournament-team.dto';
 import {
   toTournamentResponse,
   toTournamentRegistrationResponse,
@@ -96,4 +97,31 @@ export class TournamentsController {
   async getLeaderboard(@Param('id') id: string): Promise<LeaderboardEntry[]> {
     return this.matchesService.getLeaderboard(id);
   }
+
+  @Get(':id/my-team')
+  @UseGuards(JwtAuthGuard)
+  async getMyTeam(@CurrentUser() user: JwtUser, @Param('id') id: string) {
+    return this.tournamentsService.getMyTeamForTournament(user.sub, id);
+  }
+
+  @Post(':id/teams')
+  @UseGuards(JwtAuthGuard)
+  async createTournamentTeam(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: CreateTournamentTeamDto,
+  ) {
+    return this.tournamentsService.createTournamentTeam(user.sub, id, dto);
+  }
+
+  @Get(':id/teams/code/:code')
+  @UseGuards(JwtAuthGuard)
+  async getTeamByCode(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('code') code: string,
+  ) {
+    return this.tournamentsService.previewTeamByCode(id, code, user.sub);
+  }
 }
+

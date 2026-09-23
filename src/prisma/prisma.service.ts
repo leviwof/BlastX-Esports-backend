@@ -35,6 +35,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private async tryConnect(): Promise<void> {
     try {
       await this.$connect();
+      await this.$executeRawUnsafe(
+        'ALTER TABLE "teams" ADD COLUMN IF NOT EXISTS "accepting_substitutes" BOOLEAN NOT NULL DEFAULT true;',
+      ).catch(() => {});
       if (!this.connected) this.logger.log('Database connection established');
       this.connected = true;
       this.lastFailure = null;

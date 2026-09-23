@@ -1,10 +1,6 @@
-import { IsNotEmpty, IsOptional, IsString, IsUrl, Matches, Length, IsBoolean } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, IsUrl, Length, Matches } from 'class-validator';
 
-export class CreateTeamDto {
-  @IsOptional()
-  @IsString()
-  game_slug?: string = 'free_fire';
-
+export class CreateTournamentTeamDto {
   @IsNotEmpty()
   @IsString()
   @Length(3, 30)

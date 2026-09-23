@@ -111,17 +111,22 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async checkAndRunLifecycle(): Promise<void> {
-    const now = new Date();
-    const roomReleaseMinutes = Number(this.config.get<number>('ROOM_RELEASE_MINUTES') || 15);
+    if (!this.prisma.isConnected) {
+      return;
+    }
 
-    // 1. Auto Open Registration: UPCOMING or DRAFT where registrationOpensAt <= now
-    const toOpen = await this.prisma.tournament.findMany({
-      where: {
-        status: { in: [TournamentStatus.UPCOMING, TournamentStatus.DRAFT] },
-        registrationOpensAt: { lte: now },
-        registrationClosesAt: { gt: now },
-      },
-    });
+    try {
+      const now = new Date();
+      const roomReleaseMinutes = Number(this.config.get<number>('ROOM_RELEASE_MINUTES') || 15);
+
+      // 1. Auto Open Registration: UPCOMING or DRAFT where registrationOpensAt <= now
+      const toOpen = await this.prisma.tournament.findMany({
+        where: {
+          status: { in: [TournamentStatus.UPCOMING, TournamentStatus.DRAFT] },
+          registrationOpensAt: { lte: now },
+          registrationClosesAt: { gt: now },
+        },
+      });
 
     for (const t of toOpen) {
       await this.prisma.tournament.update({
@@ -181,5 +186,8 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         roomPassword: t.roomPassword,
       });
     }
+  } catch (err: any) {
+    this.logger.error(`[SCHEDULER] Lifecycle check error: ${err.message}`, err.stack);
   }
+}
 }
