@@ -15,7 +15,7 @@ async function main() {
       latestVersion: '1.0.5',
       isMaintenance: false,
       maintenanceMessage: 'Server is under maintenance. Please try later.',
-      updateUrl: 'https://play.google.com/store/apps/details?id=com.blastx.esports',
+      updateUrl: 'https://play.google.com/store/apps/details?id=com.blastix.esports',
     },
   });
 
@@ -31,11 +31,11 @@ async function main() {
 
   // 3. Admin User
   const admin = await prisma.user.upsert({
-    where: { email: 'admin@blastxesports.com' },
+    where: { email: 'admin@blastixesports.com' },
     update: { role: UserRole.ADMIN },
     create: {
-      name: 'BlastX Admin',
-      email: 'admin@blastxesports.com',
+      name: 'BlastiX Admin',
+      email: 'admin@blastixesports.com',
       role: UserRole.ADMIN,
       isActive: true,
     },

@@ -21,8 +21,8 @@ describe('AppController', () => {
     appController = app.get<AppController>(AppController);
   });
 
-  it('returns the BlastX greeting', () => {
-    expect(appController.getHello()).toBe('Hello BlastX Esports!');
+  it('returns the BlastiX greeting', () => {
+    expect(appController.getHello()).toBe('Hello BlastiX Esports!');
   });
 
   it('reports dependency status from /health', async () => {

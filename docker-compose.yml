@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: blastx
-      POSTGRES_PASSWORD: blastx
-      POSTGRES_DB: blastx
+      POSTGRES_USER: blastix
+      POSTGRES_PASSWORD: blastix
+      POSTGRES_DB: blastix
     ports: ["5432:5432"]
     volumes: [postgres_data:/var/lib/postgresql/data]
   redis:

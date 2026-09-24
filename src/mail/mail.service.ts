@@ -45,9 +45,9 @@ export class MailService {
     const from =
       this.config.get<string>('SMTP_FROM') ||
       this.config.get<string>('SMTP_USER') ||
-      'noreply@blastxesports.com';
-    const subject = 'Your BlastX verification code';
-    const text = `Your BlastX Esports verification code is ${otp}. It expires in 5 minutes.`;
+      'noreply@blastixesports.com';
+    const subject = 'Your BlastiX verification code';
+    const text = `Your BlastiX Esports verification code is ${otp}. It expires in 5 minutes.`;
 
     // 1. Brevo HTTPS API (No custom domain required, works with any recipient)
     if (this.brevoApiKey) {
@@ -61,7 +61,7 @@ export class MailService {
           },
           body: JSON.stringify({
             sender: {
-              name: 'BlastX Esports',
+              name: 'BlastiX Esports',
               email: from,
             },
             to: [{ email }],

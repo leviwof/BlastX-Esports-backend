@@ -1,4 +1,4 @@
-# BlastX Esports API — frontend integration guide
+# BlastiX Esports API — frontend integration guide
 
 Everything a web/mobile client needs: base URL, auth flow, endpoints, realtime events and a
 copy-paste API client.
@@ -9,7 +9,7 @@ copy-paste API client.
 
 1. **Public domain.** The service ships as *Unexposed* — the frontend cannot reach it until a
    domain exists. Railway → service → **Settings → Networking → Generate Domain**.
-   You get something like `https://blastx-esports-backend-production.up.railway.app`.
+   You get something like `https://blastix-esports-backend-production.up.railway.app`.
 2. **Verify it is alive:**
    ```bash
    curl https://<your-domain>/health
@@ -209,7 +209,7 @@ export class ApiError extends Error {
   }
 }
 
-const TOKEN_KEY = 'blastx_token';
+const TOKEN_KEY = 'blastix_token';
 let token: string | null = typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_KEY) : null;
 
 export function setToken(next: string | null): void {
@@ -427,7 +427,7 @@ try {
 6. **Room credentials are gated.** `/tournaments/:id/room` errors before the release window — treat
    it as "not yet available", not a bug.
 7. **429s are normal.** OTP and login limits are intentional; show "try again in a few minutes".
-8. **Seeded admin** is `admin@blastxesports.com` (OTP login, no password) — change the email or the
+8. **Seeded admin** is `admin@blastixesports.com` (OTP login, no password) — change the email or the
    role in the DB before going live.
 9. **CORS** is currently wide open (`origin: true` with credentials), so any frontend host works,
    including `localhost`. Lock it down to your real domains before public launch.

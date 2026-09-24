@@ -1,4 +1,4 @@
-# 🎮 BlastX Esports Backend API
+# 🎮 BlastiX Esports Backend API
 
 ![NestJS](https://img.shields.io/badge/NestJS-v11.0-E0234E?style=flat-square&logo=nestjs)
 ![Prisma](https://img.shields.io/badge/Prisma-v6.19-2D3748?style=flat-square&logo=prisma)
@@ -6,7 +6,7 @@
 ![Redis](https://img.shields.io/badge/Redis-BullMQ-DC382D?style=flat-square&logo=redis)
 ![Socket.IO](https://img.shields.io/badge/Realtime-Socket.IO-010101?style=flat-square&logo=socket.io)
 
-High-performance, production-grade NestJS backend for **BlastX Esports**, powering Free Fire tournament management, team rosters, race-safe registrations, point calculations, dynamic leaderboards, realtime WebSockets, and background scheduling.
+High-performance, production-grade NestJS backend for **BlastiX Esports**, powering Free Fire tournament management, team rosters, race-safe registrations, point calculations, dynamic leaderboards, realtime WebSockets, and background scheduling.
 
 ---
 
@@ -45,8 +45,8 @@ High-performance, production-grade NestJS backend for **BlastX Esports**, poweri
 
 ```bash
 # Clone the repository
-git clone https://github.com/leviwof/BlastX-Esports-backend.git
-cd BlastX-Esports-backend
+git clone https://github.com/leviwof/BlastiX-Esports-backend.git
+cd BlastiX-Esports-backend
 
 # Install dependencies
 npm install
@@ -78,7 +78,7 @@ SMTP_HOST="localhost"
 SMTP_PORT=1025
 SMTP_USER=""
 SMTP_PASS=""
-SMTP_FROM="noreply@blastxesports.com"
+SMTP_FROM="noreply@blastixesports.com"
 
 # Phase 2 Feature Flags & Configs
 PAID_TOURNAMENTS_ENABLED=false
@@ -262,4 +262,4 @@ npm test
 
 ## 📄 License
 
-UNLICENSED - Private Repository for BlastX Esports.
+UNLICENSED - Private Repository for BlastiX Esports.

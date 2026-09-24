@@ -21,4 +21,4 @@ CREATE TABLE "app_config" (
   CONSTRAINT "app_config_pkey" PRIMARY KEY ("id")
 );
 INSERT INTO "app_config" ("id", "min_version", "latest_version", "is_maintenance", "maintenance_message", "update_url")
-VALUES (1, '1.0.0', '1.0.5', false, 'Server is under maintenance. Please try later.', 'https://play.google.com/store/apps/details?id=com.blastx.esports');
+VALUES (1, '1.0.0', '1.0.5', false, 'Server is under maintenance. Please try later.', 'https://play.google.com/store/apps/details?id=com.blastix.esports');
