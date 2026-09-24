@@ -52,6 +52,34 @@ export interface TournamentResponse {
   my_registration?: TournamentRegistrationResponse | null;
 }
 
+export interface StageTeam {
+  id: string;
+  name: string;
+  logo_url: string | null;
+  points: number;
+  kills: number;
+  rank: number;
+  is_eliminated: boolean;
+  is_qualified: boolean;
+  is_winner: boolean;
+}
+
+export interface TournamentStage {
+  stage_id: string;
+  stage_name: string;
+  stage_number: number;
+  is_current: boolean;
+  is_completed: boolean;
+  teams: StageTeam[];
+}
+
+export interface TournamentBracketResponse {
+  id: string;
+  title: string;
+  status: string;
+  stages: TournamentStage[];
+}
+
 export const toTournamentRegistrationResponse = (
   reg: TournamentRegistration & { user?: User; team?: Team | null },
 ): TournamentRegistrationResponse => ({

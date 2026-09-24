@@ -29,6 +29,7 @@ import { DisqualifyRegistrationDto } from './dto/disqualify.dto';
 import { validateStatusTransition } from './tournament-state-machine';
 import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
 import { toTeamResponse } from '../teams/team.mapper';
+import { TournamentBracketResponse, TournamentStage, StageTeam } from './tournament.mapper';
 import { randomBytes } from 'crypto';
 
 @Injectable()
@@ -729,6 +730,148 @@ export class TournamentsService {
         can_join_substitute: canJoinSub,
         is_full: isFull,
       },
+    };
+  }
+
+  async getTournamentBracket(tournamentId: string): Promise<TournamentBracketResponse> {
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      include: {
+        matches: {
+          include: {
+            results: {
+              include: {
+                registration: {
+                  include: { team: true, user: true },
+                },
+              },
+            },
+          },
+          orderBy: { matchNumber: 'asc' },
+        },
+        registrations: {
+          where: { status: RegistrationStatus.CONFIRMED },
+          include: { team: true, user: true, matchResults: true },
+        },
+      },
+    });
+
+    if (!tournament) {
+      throw new NotFoundException('Tournament not found');
+    }
+
+    // 1. If explicit bracket / stages is defined in tournament rules (e.g. rules.stages or rules.bracket)
+    const rulesObj = tournament.rules as any;
+    if (rulesObj?.stages && Array.isArray(rulesObj.stages)) {
+      return {
+        id: tournament.id,
+        title: tournament.title,
+        status: tournament.status,
+        stages: rulesObj.stages,
+      };
+    }
+
+    // 2. Generate standard stages dynamically:
+    const confirmedRegs = tournament.registrations;
+
+    // Calculate score per registration
+    const teamEntries = confirmedRegs.map((reg) => {
+      const points = reg.matchResults.reduce((acc, r) => acc + r.totalPoints, 0);
+      const kills = reg.matchResults.reduce((acc, r) => acc + r.kills, 0);
+      const booyahs = reg.matchResults.filter((r) => r.placement === 1).length;
+      const lastPlacement = reg.matchResults.length > 0 ? reg.matchResults[reg.matchResults.length - 1].placement : 999;
+      const teamId = reg.teamId || reg.userId;
+      const teamName = reg.team?.name || reg.user.name;
+      const logoUrl = reg.team?.logoUrl || reg.user.profilePic || null;
+
+      return {
+        id: teamId,
+        name: teamName,
+        logo_url: logoUrl,
+        points,
+        kills,
+        booyahs,
+        lastPlacement,
+      };
+    });
+
+    // Sort by tie-breaker: points desc, booyahs desc, kills desc, lastPlacement asc
+    teamEntries.sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      if (b.booyahs !== a.booyahs) return b.booyahs - a.booyahs;
+      if (b.kills !== a.kills) return b.kills - a.kills;
+      return a.lastPlacement - b.lastPlacement;
+    });
+
+    const isCompleted = tournament.status === TournamentStatus.COMPLETED;
+    const isLive = tournament.status === TournamentStatus.LIVE;
+
+    // Cut-off for qualification to finals: half of maxSlots or top 12
+    const totalTeams = teamEntries.length;
+    const qualifyCutoff = Math.max(1, Math.min(12, Math.ceil(totalTeams / 2)));
+
+    // Stage 1 teams:
+    const stage1Teams: StageTeam[] = teamEntries.map((t, idx) => {
+      const rank = idx + 1;
+      const isQualified = (isLive || isCompleted) && totalTeams > 1 ? rank <= qualifyCutoff : false;
+      const isEliminated = (isLive || isCompleted) && totalTeams > 1 ? rank > qualifyCutoff : false;
+      return {
+        id: t.id,
+        name: t.name,
+        logo_url: t.logo_url,
+        points: t.points,
+        kills: t.kills,
+        rank,
+        is_eliminated: isEliminated,
+        is_qualified: isQualified,
+        is_winner: false,
+      };
+    });
+
+    // Stage 2 teams: only qualified teams if tournament is live or completed
+    const stage2Source = (isLive || isCompleted) && totalTeams > 1
+      ? teamEntries.slice(0, qualifyCutoff)
+      : teamEntries;
+
+    const stage2Teams: StageTeam[] = stage2Source.map((t, idx) => {
+      const rank = idx + 1;
+      return {
+        id: t.id,
+        name: t.name,
+        logo_url: t.logo_url,
+        points: isCompleted || isLive ? t.points : 0,
+        kills: isCompleted || isLive ? t.kills : 0,
+        rank,
+        is_eliminated: isCompleted ? rank > 1 : false,
+        is_qualified: isCompleted ? false : isLive,
+        is_winner: isCompleted && rank === 1,
+      };
+    });
+
+    const stages: TournamentStage[] = [
+      {
+        stage_id: 'stage_1',
+        stage_name: 'Round 1 (Qualifiers)',
+        stage_number: 1,
+        is_current: !isCompleted && (!isLive || stage1Teams.some((t) => !t.is_qualified && !t.is_eliminated)),
+        is_completed: isCompleted || (isLive && stage1Teams.some((t) => t.is_qualified)),
+        teams: stage1Teams,
+      },
+      {
+        stage_id: 'stage_2',
+        stage_name: 'Grand Finals',
+        stage_number: 2,
+        is_current: isLive && stage1Teams.some((t) => t.is_qualified),
+        is_completed: isCompleted,
+        teams: stage2Teams,
+      },
+    ];
+
+    return {
+      id: tournament.id,
+      title: tournament.title,
+      status: tournament.status,
+      stages,
     };
   }
 }

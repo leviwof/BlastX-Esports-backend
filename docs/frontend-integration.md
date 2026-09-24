@@ -353,6 +353,7 @@ export const api = {
     participants: (id: string) => request<unknown[]>(`/tournaments/${id}/participants`),
     leaderboard: (id: string) => request<unknown[]>(`/tournaments/${id}/leaderboard`),
     matches: (id: string) => request<unknown[]>(`/tournaments/${id}/matches`),
+    bracket: (id: string) => request<unknown>(`/tournaments/${id}/bracket`),
     register: (id: string, teamId?: string) =>
       request<unknown>(`/tournaments/${id}/register`, {
         method: 'POST',

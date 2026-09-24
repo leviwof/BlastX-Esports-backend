@@ -11,6 +11,7 @@ import {
   toTournamentRegistrationResponse,
   TournamentResponse,
   TournamentRegistrationResponse,
+  TournamentBracketResponse,
 } from './tournament.mapper';
 import { PaginatedResult } from '../common/pagination.dto';
 import { JwtService } from '@nestjs/jwt';
@@ -96,6 +97,16 @@ export class TournamentsController {
   @Get(':id/leaderboard')
   async getLeaderboard(@Param('id') id: string): Promise<LeaderboardEntry[]> {
     return this.matchesService.getLeaderboard(id);
+  }
+
+  @Get(':id/bracket')
+  async getBracket(@Param('id') id: string): Promise<TournamentBracketResponse> {
+    return this.tournamentsService.getTournamentBracket(id);
+  }
+
+  @Get(':id/roadmap')
+  async getRoadmap(@Param('id') id: string): Promise<TournamentBracketResponse> {
+    return this.tournamentsService.getTournamentBracket(id);
   }
 
   @Get(':id/my-team')
