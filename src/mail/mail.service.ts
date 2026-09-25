@@ -32,7 +32,8 @@ export class MailService {
         port,
         secure: port === 465,
         auth: user ? { user, pass } : undefined,
-      });
+        family: 4,
+      } as nodemailer.TransportOptions);
       this.logger.log(`MailService initialized with SMTP (${host}:${port})`);
     }
   }

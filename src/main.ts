@@ -1,5 +1,9 @@
+import * as dns from 'node:dns';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+
+// Ensure Node.js prefers IPv4 to prevent ENETUNREACH on cloud environments (like Railway) without IPv6 routing
+dns.setDefaultResultOrder?.('ipv4first');
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { ResponseInterceptor } from './common/response.interceptor';
