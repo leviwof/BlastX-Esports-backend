@@ -91,7 +91,8 @@ export class TeamsController {
     @Param('id') teamId: string,
     @Body() dto: SubstitutesToggleDto,
   ): Promise<TeamResponse> {
-    const team = await this.teamsService.toggleSubstitutes(user.sub, teamId, dto.accepting_substitutes);
+    const value = dto.accepting_substitutes ?? dto.acceptingSubstitutes ?? true;
+    const team = await this.teamsService.toggleSubstitutes(user.sub, teamId, value);
     return toTeamResponse(team);
   }
 

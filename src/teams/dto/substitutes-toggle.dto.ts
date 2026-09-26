@@ -1,7 +1,11 @@
-import { IsBoolean, IsNotEmpty } from 'class-validator';
+import { IsBoolean, IsOptional } from 'class-validator';
 
 export class SubstitutesToggleDto {
-  @IsNotEmpty()
+  @IsOptional()
   @IsBoolean()
-  accepting_substitutes!: boolean;
+  accepting_substitutes?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  acceptingSubstitutes?: boolean;
 }

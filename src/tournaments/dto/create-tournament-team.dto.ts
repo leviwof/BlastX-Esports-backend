@@ -1,4 +1,19 @@
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, IsUrl, Length, Matches } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, IsUrl, Length, Matches, ValidateIf, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class PlayerDetailsDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  ign?: string;
+
+  @IsOptional()
+  @IsString()
+  uid?: string;
+}
 
 export class CreateTournamentTeamDto {
   @IsNotEmpty()
@@ -13,10 +28,16 @@ export class CreateTournamentTeamDto {
 
   @IsOptional()
   @IsString()
+  @ValidateIf((o) => typeof o.logo_url === 'string' && o.logo_url.trim().length > 0)
   @IsUrl()
   logo_url?: string;
 
   @IsOptional()
   @IsBoolean()
   accepting_substitutes?: boolean = true;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PlayerDetailsDto)
+  player?: PlayerDetailsDto;
 }

@@ -79,6 +79,12 @@ export class TournamentsController {
     return this.tournamentsService.unregisterUserOrTeam(user.sub, id);
   }
 
+  @Post(':id/register/delete')
+  @UseGuards(JwtAuthGuard)
+  async unregisterPost(@CurrentUser() user: JwtUser, @Param('id') id: string): Promise<{ message: string }> {
+    return this.tournamentsService.unregisterUserOrTeam(user.sub, id);
+  }
+
   @Get(':id/room')
   @UseGuards(JwtAuthGuard)
   async getRoomDetails(

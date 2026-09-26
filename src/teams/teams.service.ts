@@ -153,7 +153,7 @@ export class TeamsService {
     }
 
     // Must have a Game Profile for team's game
-    const profile = await this.prisma.gameProfile.findUnique({
+    let profile = await this.prisma.gameProfile.findUnique({
       where: {
         unique_user_game: {
           userId,
@@ -161,6 +161,13 @@ export class TeamsService {
         },
       },
     });
+    if (!profile && dto.player?.uid && dto.player?.ign) {
+      profile = await this.prisma.gameProfile.upsert({
+        where: { unique_user_game: { userId, gameId: team.gameId } },
+        update: { inGameUid: dto.player.uid, inGameName: dto.player.ign },
+        create: { userId, gameId: team.gameId, inGameUid: dto.player.uid, inGameName: dto.player.ign },
+      });
+    }
     if (!profile) {
       throw new BadRequestException('You must set up your Free Fire game profile before joining a team');
     }
@@ -177,21 +184,31 @@ export class TeamsService {
     }
 
     // Determine target role (Substitute vs Main Player)
-    const isJoiningAsSubstitute =
-      dto.as_substitute === true || dto.role === TeamMemberRole.SUBSTITUTE;
+    let isJoiningAsSubstitute =
+      dto.as_substitute === true ||
+      dto.role === TeamMemberRole.SUBSTITUTE ||
+      dto.rosterType?.toUpperCase() === 'SUBSTITUTE';
+
+    const mainPlayers = team.members.filter((m) => m.role !== TeamMemberRole.SUBSTITUTE);
+    const existingSub = team.members.some((m) => m.role === TeamMemberRole.SUBSTITUTE);
+
+    // If main roster is full, fallback to substitute if team accepts substitutes and has slot
+    if (!isJoiningAsSubstitute && mainPlayers.length >= 4) {
+      if (team.acceptingSubstitutes && !existingSub) {
+        isJoiningAsSubstitute = true;
+      }
+    }
 
     let targetRole: TeamMemberRole = TeamMemberRole.PLAYER;
     if (isJoiningAsSubstitute) {
       if (!team.acceptingSubstitutes) {
         throw new BadRequestException('This team is not currently accepting substitutes');
       }
-      const existingSub = team.members.some((m) => m.role === TeamMemberRole.SUBSTITUTE);
       if (existingSub) {
         throw new BadRequestException('Team already has a substitute player');
       }
       targetRole = TeamMemberRole.SUBSTITUTE;
     } else {
-      const mainPlayers = team.members.filter((m) => m.role !== TeamMemberRole.SUBSTITUTE);
       if (mainPlayers.length >= 4) {
         throw new BadRequestException(
           'Main roster is full (maximum 4 players). You can join as a substitute if the team accepts substitutes.',

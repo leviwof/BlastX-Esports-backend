@@ -409,11 +409,20 @@ export class TournamentsService {
       throw new BadRequestException('Cannot unregister after registration window has closed');
     }
 
+    const userTeams = await this.prisma.teamMember.findMany({
+      where: { userId, role: TeamMemberRole.CAPTAIN },
+      select: { teamId: true },
+    });
+    const captainTeamIds = userTeams.map((t) => t.teamId);
+
     const registration = await this.prisma.tournamentRegistration.findFirst({
       where: {
         tournamentId,
-        userId,
         status: RegistrationStatus.CONFIRMED,
+        OR: [
+          { userId },
+          ...(captainTeamIds.length > 0 ? [{ teamId: { in: captainTeamIds } }] : []),
+        ],
       },
     });
 
@@ -567,9 +576,24 @@ export class TournamentsService {
     }
 
     // Must have Game Profile for tournament's game
-    const profile = await this.prisma.gameProfile.findUnique({
+    let profile = await this.prisma.gameProfile.findUnique({
       where: { unique_user_game: { userId, gameId: tournament.gameId } },
     });
+    if (!profile && dto.player?.uid && dto.player?.ign) {
+      profile = await this.prisma.gameProfile.upsert({
+        where: { unique_user_game: { userId, gameId: tournament.gameId } },
+        update: {
+          inGameUid: dto.player.uid,
+          inGameName: dto.player.ign,
+        },
+        create: {
+          userId,
+          gameId: tournament.gameId,
+          inGameUid: dto.player.uid,
+          inGameName: dto.player.ign,
+        },
+      });
+    }
     if (!profile) {
       throw new BadRequestException('You must set up your Free Fire game profile before creating a team');
     }
@@ -617,13 +641,16 @@ export class TournamentsService {
     });
     const nextSlot = (maxSlot._max.slotNumber || 0) + 1;
 
+    const sanitizedLogoUrl =
+      dto.logo_url && dto.logo_url.trim().length > 0 ? dto.logo_url.trim() : null;
+
     const team = await this.prisma.$transaction(async (tx) => {
       const createdTeam = await tx.team.create({
         data: {
           gameId: tournament.gameId,
           name: dto.name,
           tag: dto.tag.toUpperCase(),
-          logoUrl: dto.logo_url,
+          logoUrl: sanitizedLogoUrl,
           acceptingSubstitutes: dto.accepting_substitutes ?? true,
           captainId: userId,
           inviteCode,
