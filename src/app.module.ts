@@ -17,6 +17,7 @@ import { MatchesModule } from './matches/matches.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ChallengesModule } from './challenges/challenges.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     TeamsModule,
     TournamentsModule,
     MatchesModule,
+    ChallengesModule,
     RealtimeModule,
     SchedulerModule,
     NotificationsModule,
