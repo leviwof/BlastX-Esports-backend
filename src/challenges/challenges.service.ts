@@ -383,10 +383,10 @@ export class ChallengesService implements OnModuleInit {
   async listProofs(
     query: ListProofsQuery,
   ): Promise<PaginatedResult<AdminProofResponse>> {
-    const status = query.status ?? ChallengeStatus.PROOF_SUBMITTED;
-    const where: Prisma.UserChallengeWhereInput = {
-      status,
-    };
+    const where: Prisma.UserChallengeWhereInput = {};
+    if (query.status) {
+      where.status = query.status;
+    }
 
     const [total, userChallenges] = await Promise.all([
       this.prisma.userChallenge.count({ where }),

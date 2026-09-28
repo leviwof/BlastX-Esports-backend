@@ -18,7 +18,7 @@ export class ListProofsQuery {
 
   @IsOptional()
   @IsEnum(ChallengeStatus)
-  status?: ChallengeStatus = ChallengeStatus.PROOF_SUBMITTED;
+  status?: ChallengeStatus;
 
   get skip(): number {
     return ((this.page ?? 1) - 1) * (this.limit ?? 20);
