@@ -43,7 +43,8 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 RUN apk add --no-cache openssl \
- && addgroup -S nodejs && adduser -S nestjs -G nodejs
+ && addgroup -S nodejs && adduser -S nestjs -G nodejs \
+ && mkdir -p /app/uploads/proofs && chown -R nestjs:nodejs /app/uploads
 COPY --from=prod-deps --chown=nestjs:nodejs /app/node_modules ./node_modules
 COPY --from=prod-deps --chown=nestjs:nodejs /app/prisma ./prisma
 COPY --from=build --chown=nestjs:nodejs /app/dist ./dist

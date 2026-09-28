@@ -209,20 +209,11 @@ export class ChallengesService implements OnModuleInit {
       throw new BadRequestException('Invalid file type. Only video files (.mp4) are accepted as match proof.');
     }
 
-    // Ensure local uploads directory exists
-    const uploadDir = path.join(process.cwd(), 'uploads', 'proofs');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-
     const uniqueFilename = `${challengeId}_${userId}_${Date.now()}.mp4`;
-    const filePath = path.join(uploadDir, uniqueFilename);
-    fs.writeFileSync(filePath, file.buffer);
-
     const baseUrl = process.env.BASE_URL || 'https://blastx-esports-backend-production-4b5f.up.railway.app';
     let proofUrl = `${baseUrl}/uploads/proofs/${uniqueFilename}`;
 
-    // 1. Try Google Drive (Primary 15TB cloud storage)
+    // 1. Primary: Google Drive (15TB Cloud Storage)
     const gdriveUrl = await this.uploadToGoogleDrive(uniqueFilename, file.mimetype, file.buffer);
     if (gdriveUrl) {
       proofUrl = gdriveUrl;
@@ -230,6 +221,8 @@ export class ChallengesService implements OnModuleInit {
       // 2. Fallback: Supabase Storage bucket 'proofs'
       const supabaseUrl = process.env.SUPABASE_URL;
       const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+      let uploadedToSupabase = false;
+
       if (supabaseUrl && supabaseKey) {
         try {
           const uploadRes = await fetch(`${supabaseUrl}/storage/v1/object/proofs/${uniqueFilename}`, {
@@ -244,10 +237,25 @@ export class ChallengesService implements OnModuleInit {
 
           if (uploadRes.ok) {
             proofUrl = `${supabaseUrl}/storage/v1/object/public/proofs/${uniqueFilename}`;
+            uploadedToSupabase = true;
             this.logger.log(`Video recording uploaded to Supabase Storage: ${proofUrl}`);
           }
         } catch (uploadErr) {
           this.logger.warn(`Supabase Storage upload error: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
+        }
+      }
+
+      // 3. Fallback: Local disk (safe write)
+      if (!uploadedToSupabase) {
+        try {
+          const uploadDir = path.join(process.cwd(), 'uploads', 'proofs');
+          if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+          }
+          const filePath = path.join(uploadDir, uniqueFilename);
+          fs.writeFileSync(filePath, file.buffer);
+        } catch (fsErr) {
+          this.logger.warn(`Could not save proof locally to disk: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`);
         }
       }
     }
