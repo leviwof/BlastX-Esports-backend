@@ -26,6 +26,7 @@ import { RejectProofDto } from './dto/reject-proof.dto';
 import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { JWT } from 'google-auth-library';
 
 
 @Injectable()
@@ -221,29 +222,33 @@ export class ChallengesService implements OnModuleInit {
     const baseUrl = process.env.BASE_URL || 'https://blastx-esports-backend-production-4b5f.up.railway.app';
     let proofUrl = `${baseUrl}/uploads/proofs/${uniqueFilename}`;
 
-    // Upload to Supabase Storage bucket 'proofs' if configured (permanent cloud storage)
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
-    if (supabaseUrl && supabaseKey) {
-      try {
-        const uploadRes = await fetch(`${supabaseUrl}/storage/v1/object/proofs/${uniqueFilename}`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${supabaseKey}`,
-            'Content-Type': file.mimetype || 'video/mp4',
-            'x-upsert': 'true',
-          },
-          body: file.buffer,
-        });
+    // 1. Try Google Drive (Primary 15TB cloud storage)
+    const gdriveUrl = await this.uploadToGoogleDrive(uniqueFilename, file.mimetype, file.buffer);
+    if (gdriveUrl) {
+      proofUrl = gdriveUrl;
+    } else {
+      // 2. Fallback: Supabase Storage bucket 'proofs'
+      const supabaseUrl = process.env.SUPABASE_URL;
+      const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+      if (supabaseUrl && supabaseKey) {
+        try {
+          const uploadRes = await fetch(`${supabaseUrl}/storage/v1/object/proofs/${uniqueFilename}`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${supabaseKey}`,
+              'Content-Type': file.mimetype || 'video/mp4',
+              'x-upsert': 'true',
+            },
+            body: file.buffer,
+          });
 
-        if (uploadRes.ok) {
-          proofUrl = `${supabaseUrl}/storage/v1/object/public/proofs/${uniqueFilename}`;
-          this.logger.log(`Video recording uploaded to Supabase Storage: ${proofUrl}`);
-        } else {
-          this.logger.warn(`Supabase Storage upload returned status ${uploadRes.status}, fallback to local static URL`);
+          if (uploadRes.ok) {
+            proofUrl = `${supabaseUrl}/storage/v1/object/public/proofs/${uniqueFilename}`;
+            this.logger.log(`Video recording uploaded to Supabase Storage: ${proofUrl}`);
+          }
+        } catch (uploadErr) {
+          this.logger.warn(`Supabase Storage upload error: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
         }
-      } catch (uploadErr) {
-        this.logger.warn(`Supabase Storage upload error, fallback to local: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
       }
     }
 
@@ -471,6 +476,103 @@ export class ChallengesService implements OnModuleInit {
 
     return toAdminProofResponse(updated);
   }
+
+  private async uploadToGoogleDrive(
+    filename: string,
+    mimeType: string,
+    buffer: Buffer,
+  ): Promise<string | null> {
+    const clientEmail = process.env.GOOGLE_DRIVE_CLIENT_EMAIL;
+    const privateKey = process.env.GOOGLE_DRIVE_PRIVATE_KEY;
+    const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+
+    if (!clientEmail || !privateKey) return null;
+
+    try {
+      const auth = new JWT({
+        email: clientEmail,
+        key: privateKey.replace(/\\n/g, '\n'),
+        scopes: ['https://www.googleapis.com/auth/drive'],
+      });
+
+      const tokenRes = await auth.getAccessToken();
+      const accessToken = tokenRes?.token;
+      if (!accessToken) throw new Error('Could not get Google Drive access token');
+
+      const boundary = '-------blastix3141592653589793';
+      const delimiter = `\r\n--${boundary}\r\n`;
+      const closeDelimiter = `\r\n--${boundary}--`;
+
+      const metadata: Record<string, any> = {
+        name: filename,
+        description: 'BlastiX match proof recording',
+      };
+      if (folderId && folderId.trim()) {
+        metadata.parents = [folderId.trim()];
+      }
+
+      const multipartRequestBody = Buffer.concat([
+        Buffer.from(
+          delimiter +
+            'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+            JSON.stringify(metadata) +
+            delimiter +
+            `Content-Type: ${mimeType || 'video/mp4'}\r\n\r\n`,
+        ),
+        buffer,
+        Buffer.from(closeDelimiter),
+      ]);
+
+      const uploadUrl = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink`;
+      const uploadRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': `multipart/related; boundary=${boundary}`,
+          'Content-Length': String(multipartRequestBody.length),
+        },
+        body: multipartRequestBody,
+      });
+
+      if (!uploadRes.ok) {
+        const errText = await uploadRes.text();
+        throw new Error(`Upload failed (${uploadRes.status}): ${errText}`);
+      }
+
+      const fileData = (await uploadRes.json()) as { id: string; webViewLink?: string };
+      const fileId = fileData.id;
+
+      // Make file readable so admin panel can preview it directly
+      try {
+        await fetch(
+          `https://www.googleapis.com/drive/v3/files/${fileId}/permissions?supportsAllDrives=true`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              role: 'reader',
+              type: 'anyone',
+            }),
+          },
+        );
+      } catch (permErr) {
+        this.logger.warn(`Could not set public permission on Google Drive file: ${permErr}`);
+      }
+
+      const previewUrl = `https://drive.google.com/file/d/${fileId}/preview`;
+      this.logger.log(`Proof video uploaded to Google Drive (15TB): ${previewUrl}`);
+      return previewUrl;
+    } catch (err) {
+      this.logger.error(
+        `Google Drive upload error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
 }
+
 
 
