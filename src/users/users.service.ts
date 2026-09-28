@@ -129,22 +129,39 @@ export class UsersService {
 
   async updateUserProfile(userId: string, dto: UpdateUserDto): Promise<User> {
     const data: Prisma.UserUpdateInput = {};
-    if (dto.name !== undefined) data.name = dto.name;
-    if (dto.profile_pic !== undefined) data.profilePic = dto.profile_pic;
+    if (dto.name !== undefined) {
+      data.name = dto.name.trim();
+    }
+    const pic = dto.profile_pic !== undefined ? dto.profile_pic : dto.profilePic;
+    if (pic !== undefined) {
+      data.profilePic = pic && pic.trim() ? pic.trim() : null;
+    }
     return this.prisma.user.update({ where: { id: userId }, data });
   }
 
-  async upsertGameProfile(userId: string, dto: UpsertGameProfileDto): Promise<GameProfile & { game: { slug: string } }> {
-    const game = await this.prisma.game.findUnique({ where: { slug: dto.game_slug } });
+  async upsertGameProfile(userId: string, dto: UpsertGameProfileDto): Promise<GameProfile & { game: { slug: string; name: string } }> {
+    let game = await this.prisma.game.findUnique({ where: { slug: dto.game_slug } });
     if (!game) {
-      throw new BadRequestException(`Game with slug '${dto.game_slug}' not found`);
+      if (dto.game_slug === 'free_fire') {
+        game = await this.prisma.game.create({
+          data: {
+            slug: 'free_fire',
+            name: 'Free Fire',
+          },
+        });
+      } else {
+        throw new BadRequestException(`Game with slug '${dto.game_slug}' not found`);
+      }
     }
+
+    const cleanUid = dto.in_game_uid.trim();
+    const cleanName = dto.in_game_name.trim();
 
     // Check if in_game_uid is already used by another user for this game
     const existingUid = await this.prisma.gameProfile.findFirst({
       where: {
         gameId: game.id,
-        inGameUid: dto.in_game_uid,
+        inGameUid: cleanUid,
         NOT: { userId },
       },
     });
@@ -160,24 +177,24 @@ export class UsersService {
         },
       },
       update: {
-        inGameUid: dto.in_game_uid,
-        inGameName: dto.in_game_name,
+        inGameUid: cleanUid,
+        inGameName: cleanName,
       },
       create: {
         userId,
         gameId: game.id,
-        inGameUid: dto.in_game_uid,
-        inGameName: dto.in_game_name,
+        inGameUid: cleanUid,
+        inGameName: cleanName,
       },
       include: {
         game: {
-          select: { slug: true },
+          select: { slug: true, name: true },
         },
       },
     });
   }
 
-  async getGameProfile(userId: string, gameSlug: string = 'free_fire'): Promise<(GameProfile & { game: { slug: string } }) | null> {
+  async getGameProfile(userId: string, gameSlug: string = 'free_fire'): Promise<(GameProfile & { game: { slug: string; name: string } }) | null> {
     const game = await this.prisma.game.findUnique({ where: { slug: gameSlug } });
     if (!game) return null;
 
@@ -189,7 +206,7 @@ export class UsersService {
         },
       },
       include: {
-        game: { select: { slug: true } },
+        game: { select: { slug: true, name: true } },
       },
     });
   }

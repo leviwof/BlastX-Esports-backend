@@ -41,7 +41,8 @@ export interface GameProfileResponse {
   id: string;
   user_id: string;
   game_id: string;
-  game_slug?: string;
+  game_slug: string;
+  game_name: string;
   in_game_uid: string;
   in_game_name: string;
   created_at: Date;
@@ -71,11 +72,14 @@ export const toUserResponse = (
   game_profile: stats?.game_profile ?? null,
 });
 
-export const toGameProfileResponse = (profile: GameProfile & { game?: { slug: string } }): GameProfileResponse => ({
+export const toGameProfileResponse = (
+  profile: GameProfile & { game?: { slug: string; name?: string } },
+): GameProfileResponse => ({
   id: profile.id,
   user_id: profile.userId,
   game_id: profile.gameId,
-  ...(profile.game?.slug ? { game_slug: profile.game.slug } : {}),
+  game_slug: profile.game?.slug || 'free_fire',
+  game_name: profile.game?.name || (profile.game?.slug === 'bgmi' ? 'BGMI' : 'Free Fire'),
   in_game_uid: profile.inGameUid,
   in_game_name: profile.inGameName,
   created_at: profile.createdAt,

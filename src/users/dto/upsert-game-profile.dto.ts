@@ -1,16 +1,19 @@
-import { IsNotEmpty, IsString, Matches } from 'class-validator';
+import { IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator';
 
 export class UpsertGameProfileDto {
-  @IsNotEmpty()
-  @IsString()
+  @IsNotEmpty({ message: 'game_slug is required' })
+  @IsString({ message: 'game_slug must be a string' })
   game_slug: string = 'free_fire';
 
-  @IsNotEmpty()
-  @IsString()
-  @Matches(/^\d{8,12}$/, { message: 'In-game UID must be 8 to 12 digits' })
+  @IsNotEmpty({ message: 'in_game_uid is required' })
+  @IsString({ message: 'in_game_uid must be a string' })
+  @Matches(/^\d{6,12}$/, {
+    message: 'in_game_uid must contain only numeric digits and be between 6 and 12 characters long.',
+  })
   in_game_uid!: string;
 
-  @IsNotEmpty()
-  @IsString()
+  @IsNotEmpty({ message: 'in_game_name is required' })
+  @IsString({ message: 'in_game_name must be a string' })
+  @MaxLength(30, { message: 'in_game_name must not exceed 30 characters' })
   in_game_name!: string;
 }

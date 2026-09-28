@@ -21,6 +21,7 @@ export class UsersController {
   }
 
   @Patch('me')
+  @Put('me')
   async updateProfile(@CurrentUser() user: JwtUser, @Body() dto: UpdateUserDto): Promise<UserResponse> {
     await this.usersService.updateUserProfile(user.sub, dto);
     const profile = await this.usersService.getProfileWithStats(user.sub);

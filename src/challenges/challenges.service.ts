@@ -232,7 +232,7 @@ export class ChallengesService implements OnModuleInit {
               'Content-Type': file.mimetype || 'video/mp4',
               'x-upsert': 'true',
             },
-            body: file.buffer,
+            body: new Uint8Array(file.buffer),
           });
 
           if (uploadRes.ok) {
