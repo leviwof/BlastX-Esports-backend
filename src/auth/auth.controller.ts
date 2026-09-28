@@ -1,2 +1,32 @@
-import { Body, Controller, Post } from '@nestjs/common'; import { Throttle } from '@nestjs/throttler'; import { AuthService } from './auth.service'; import { LoginDto } from './dto/login.dto'; import { RegisterDto } from './dto/register.dto'; import { SendOtpDto } from './dto/send-otp.dto'; import { SocialLoginDto } from './dto/social-login.dto'; import { VerifyTokenDto } from './dto/verify-token.dto';
-@Controller('auth') export class AuthController { constructor(private readonly service: AuthService) {} @Post('verify-token') verify(@Body() dto: VerifyTokenDto) { return this.service.verifyToken(dto.token); } @Post('send-otp') @Throttle({ default: { limit: 10, ttl: 60000 } }) sendOtp(@Body() dto: SendOtpDto) { return this.service.sendOtp(dto.email); } @Post('login') login(@Body() dto: LoginDto) { return this.service.login(dto); } @Post('register') register(@Body() dto: RegisterDto) { return this.service.register(dto); } @Post('social-login') social(@Body() dto: SocialLoginDto) { return this.service.socialLogin(dto.token); } }
+import { Body, Controller, Post } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
+import { Public } from '../common/public.decorator';
+import { AuthService } from './auth.service';
+import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
+import { SendOtpDto } from './dto/send-otp.dto';
+import { SocialLoginDto } from './dto/social-login.dto';
+import { VerifyTokenDto } from './dto/verify-token.dto';
+
+@Public()
+@Controller('auth')
+export class AuthController {
+  constructor(private readonly service: AuthService) {}
+
+  @Post('verify-token')
+  verify(@Body() dto: VerifyTokenDto) { return this.service.verifyToken(dto.token); }
+
+  @Post('send-otp')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  sendOtp(@Body() dto: SendOtpDto) { return this.service.sendOtp(dto.email); }
+
+  @Post('login')
+  login(@Body() dto: LoginDto) { return this.service.login(dto); }
+
+  @Post('register')
+  register(@Body() dto: RegisterDto) { return this.service.register(dto); }
+
+  @Post('social-login')
+  social(@Body() dto: SocialLoginDto) { return this.service.socialLogin(dto.token); }
+}
+
