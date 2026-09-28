@@ -1,9 +1,19 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
-import { Prisma, User, GameProfile, RegistrationStatus } from '@prisma/client';
+import { Prisma, User, GameProfile, RegistrationStatus, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpsertGameProfileDto } from './dto/upsert-game-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { toUserResponse, UserResponse, UserGameProfileSummary } from './user.mapper';
+import { ListUsersQuery } from './dto/list-users.query';
+import { AdminUpdateUserDto } from './dto/admin-update-user.dto';
+import {
+  toUserResponse,
+  UserResponse,
+  UserGameProfileSummary,
+  AdminUserResponse,
+  toAdminUserResponse,
+} from './user.mapper';
+import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
+
 
 @Injectable()
 export class UsersService {
@@ -183,4 +193,68 @@ export class UsersService {
       },
     });
   }
+
+  async listUsers(query: ListUsersQuery): Promise<PaginatedResult<AdminUserResponse>> {
+    const where: Prisma.UserWhereInput = {};
+
+    if (query.search && query.search.trim()) {
+      const search = query.search.trim();
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (query.role) {
+      where.role = query.role === 'PLAYER' ? UserRole.USER : UserRole.ADMIN;
+    }
+
+    if (typeof query.is_active === 'boolean') {
+      where.isActive = query.is_active;
+    }
+
+    const [total, users] = await Promise.all([
+      this.prisma.user.count({ where }),
+      this.prisma.user.findMany({
+        where,
+        skip: query.skip,
+        take: query.take,
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    return createPaginatedResponse(users.map(toAdminUserResponse), query.page ?? 1, query.limit ?? 20, total);
+  }
+
+  async getUserById(id: string): Promise<AdminUserResponse> {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) {
+      throw new NotFoundException(`User with ID '${id}' not found`);
+    }
+    return toAdminUserResponse(user);
+  }
+
+  async adminUpdateUser(id: string, dto: AdminUpdateUserDto): Promise<AdminUserResponse> {
+    const existing = await this.prisma.user.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException(`User with ID '${id}' not found`);
+    }
+
+    const data: Prisma.UserUpdateInput = {};
+    if (typeof dto.is_active === 'boolean') {
+      data.isActive = dto.is_active;
+    }
+    if (dto.role) {
+      data.role = dto.role === 'PLAYER' ? UserRole.USER : UserRole.ADMIN;
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data,
+    });
+
+    return toAdminUserResponse(updated);
+  }
 }
+
+

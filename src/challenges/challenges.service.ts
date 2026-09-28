@@ -7,15 +7,26 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { ChallengeType, ChallengeStatus } from '@prisma/client';
+import { Prisma, ChallengeType, ChallengeStatus } from '@prisma/client';
 import {
   toChallengeResponse,
   ChallengeResponse,
   SubmitProofResponse,
+  AdminChallengeResponse,
+  AdminProofResponse,
+  toAdminChallengeResponse,
+  toAdminProofResponse,
 } from './challenge.mapper';
 import { UploadedProofFile } from './dto/submit-proof.dto';
+import { ListChallengesQuery } from './dto/list-challenges.query';
+import { CreateChallengeDto } from './dto/create-challenge.dto';
+import { UpdateChallengeDto } from './dto/update-challenge.dto';
+import { ListProofsQuery } from './dto/list-proofs.query';
+import { RejectProofDto } from './dto/reject-proof.dto';
+import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
 import * as fs from 'fs';
 import * as path from 'path';
+
 
 @Injectable()
 export class ChallengesService implements OnModuleInit {
@@ -239,4 +250,201 @@ export class ChallengesService implements OnModuleInit {
       proof_url: proofUrl,
     };
   }
+
+  async listAdminChallenges(
+    query: ListChallengesQuery,
+  ): Promise<PaginatedResult<AdminChallengeResponse>> {
+    const where: Prisma.ChallengeWhereInput = {};
+    if (query.type) where.type = query.type;
+    if (typeof query.is_active === 'boolean') where.isActive = query.is_active;
+
+    const [total, challenges] = await Promise.all([
+      this.prisma.challenge.count({ where }),
+      this.prisma.challenge.findMany({
+        where,
+        skip: query.skip,
+        take: query.take,
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    return createPaginatedResponse(challenges.map(toAdminChallengeResponse), query.page ?? 1, query.limit ?? 20, total);
+  }
+
+  async createChallenge(
+    dto: CreateChallengeDto,
+  ): Promise<AdminChallengeResponse> {
+    const challenge = await this.prisma.challenge.create({
+      data: {
+        title: dto.title,
+        description: dto.description,
+        rewardXp: dto.reward_xp,
+        targetProgress: dto.target_progress ?? 1.0,
+        game: dto.game ?? 'Free Fire',
+        type: dto.type ?? ChallengeType.DAILY,
+        requiresRecording: dto.requires_recording ?? true,
+        gamePackage: dto.game_package ?? 'com.dts.freefireth',
+        iconAsset: dto.icon_asset ?? null,
+      },
+    });
+
+    return toAdminChallengeResponse(challenge);
+  }
+
+  async updateChallenge(
+    id: string,
+    dto: UpdateChallengeDto,
+  ): Promise<AdminChallengeResponse> {
+    const existing = await this.prisma.challenge.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException(`Challenge with ID '${id}' not found`);
+    }
+
+    const data: Prisma.ChallengeUpdateInput = {};
+    if (dto.title !== undefined) data.title = dto.title;
+    if (dto.description !== undefined) data.description = dto.description;
+    if (dto.reward_xp !== undefined) data.rewardXp = dto.reward_xp;
+    if (dto.target_progress !== undefined) data.targetProgress = dto.target_progress;
+    if (dto.game !== undefined) data.game = dto.game;
+    if (dto.type !== undefined) data.type = dto.type;
+    if (dto.requires_recording !== undefined) data.requiresRecording = dto.requires_recording;
+    if (dto.game_package !== undefined) data.gamePackage = dto.game_package;
+    if (dto.icon_asset !== undefined) data.iconAsset = dto.icon_asset;
+    if (dto.is_active !== undefined) data.isActive = dto.is_active;
+
+    const updated = await this.prisma.challenge.update({
+      where: { id },
+      data,
+    });
+
+    return toAdminChallengeResponse(updated);
+  }
+
+  async deleteChallenge(id: string): Promise<{ message: string; soft_deleted: boolean }> {
+    const existing = await this.prisma.challenge.findUnique({
+      where: { id },
+      include: { _count: { select: { userProgress: true } } },
+    });
+    if (!existing) {
+      throw new NotFoundException(`Challenge with ID '${id}' not found`);
+    }
+
+    if (existing._count.userProgress > 0) {
+      await this.prisma.challenge.update({
+        where: { id },
+        data: { isActive: false },
+      });
+      return { message: 'Challenge has user progress; deactivated (soft-deleted)', soft_deleted: true };
+    } else {
+      await this.prisma.challenge.delete({ where: { id } });
+      return { message: 'Challenge deleted successfully', soft_deleted: false };
+    }
+  }
+
+  async listProofs(
+    query: ListProofsQuery,
+  ): Promise<PaginatedResult<AdminProofResponse>> {
+    const status = query.status ?? ChallengeStatus.PROOF_SUBMITTED;
+    const where: Prisma.UserChallengeWhereInput = {
+      status,
+    };
+
+    const [total, userChallenges] = await Promise.all([
+      this.prisma.userChallenge.count({ where }),
+      this.prisma.userChallenge.findMany({
+        where,
+        skip: query.skip,
+        take: query.take,
+        orderBy: { submittedAt: 'desc' },
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+          challenge: { select: { id: true, title: true, rewardXp: true } },
+        },
+      }),
+    ]);
+
+    return createPaginatedResponse(userChallenges.map(toAdminProofResponse), query.page ?? 1, query.limit ?? 20, total);
+  }
+
+  async approveProof(
+    id: string,
+    adminUserId: string,
+  ): Promise<AdminProofResponse> {
+    const userChallenge = await this.prisma.userChallenge.findUnique({
+      where: { id },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        challenge: { select: { id: true, title: true, rewardXp: true } },
+      },
+    });
+
+    if (!userChallenge) {
+      throw new NotFoundException(`Proof with ID '${id}' not found`);
+    }
+
+    if (userChallenge.status === ChallengeStatus.COMPLETED || userChallenge.status === ChallengeStatus.CLAIMED) {
+      throw new BadRequestException('Proof is already approved');
+    }
+
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.userChallenge.update({
+        where: { id },
+        data: {
+          status: ChallengeStatus.COMPLETED,
+          isCompleted: true,
+          reviewedAt: new Date(),
+          reviewedBy: adminUserId,
+          rejectionReason: null,
+        },
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+          challenge: { select: { id: true, title: true, rewardXp: true } },
+        },
+      }),
+      this.prisma.user.update({
+        where: { id: userChallenge.userId },
+        data: {
+          xp: { increment: userChallenge.challenge.rewardXp },
+        },
+      }),
+    ]);
+
+    return toAdminProofResponse(updated);
+  }
+
+  async rejectProof(
+    id: string,
+    dto: RejectProofDto,
+    adminUserId: string,
+  ): Promise<AdminProofResponse> {
+    const userChallenge = await this.prisma.userChallenge.findUnique({
+      where: { id },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        challenge: { select: { id: true, title: true, rewardXp: true } },
+      },
+    });
+
+    if (!userChallenge) {
+      throw new NotFoundException(`Proof with ID '${id}' not found`);
+    }
+
+    const updated = await this.prisma.userChallenge.update({
+      where: { id },
+      data: {
+        status: ChallengeStatus.PROOF_REJECTED,
+        rejectionReason: dto.reason,
+        reviewedAt: new Date(),
+        reviewedBy: adminUserId,
+      },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        challenge: { select: { id: true, title: true, rewardXp: true } },
+      },
+    });
+
+    return toAdminProofResponse(updated);
+  }
 }
+
+

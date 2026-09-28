@@ -81,3 +81,30 @@ export const toGameProfileResponse = (profile: GameProfile & { game?: { slug: st
   created_at: profile.createdAt,
   updated_at: profile.updatedAt,
 });
+
+export interface AdminUserResponse {
+  id: string;
+  name: string;
+  email: string;
+  profile_pic: string | null;
+  role: 'PLAYER' | 'ADMIN';
+  is_active: boolean;
+  xp: number;
+  rank: number;
+  created_at: Date;
+  updated_at?: Date;
+}
+
+export const toAdminUserResponse = (user: User): AdminUserResponse => ({
+  id: user.id,
+  name: user.name,
+  email: user.email,
+  profile_pic: user.profilePic,
+  role: user.role === 'USER' ? 'PLAYER' : 'ADMIN',
+  is_active: user.isActive,
+  xp: user.xp ?? 0,
+  rank: user.rank ?? 0,
+  created_at: user.createdAt,
+  updated_at: user.updatedAt,
+});
+

@@ -3,8 +3,17 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
 import { JoinTeamDto } from './dto/join-team.dto';
-import { TeamMemberRole, Team, TeamMember, User, GameProfile, RegistrationStatus } from '@prisma/client';
+import { ListAdminTeamsQuery } from './dto/list-admin-teams.query';
+import {
+  TeamSummaryResponse,
+  TeamDetailResponse,
+  toTeamSummaryResponse,
+  toTeamDetailResponse,
+} from './team.mapper';
+import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
+import { Prisma, TeamMemberRole, Team, TeamMember, User, GameProfile, RegistrationStatus } from '@prisma/client';
 import { randomBytes } from 'crypto';
+
 
 export type TeamWithMembers = Team & {
   members: (TeamMember & { user: User & { gameProfiles?: GameProfile[] } })[];
@@ -419,4 +428,69 @@ export class TeamsService {
 
     return this.getTeamById(teamId);
   }
+
+  async listAdminTeams(
+    query: ListAdminTeamsQuery,
+  ): Promise<PaginatedResult<TeamSummaryResponse>> {
+    const where: Prisma.TeamWhereInput = {};
+    if (query.search && query.search.trim()) {
+      const search = query.search.trim();
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { tag: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    if (query.game_slug) {
+      where.game = { slug: query.game_slug };
+    }
+
+    const [total, teams] = await Promise.all([
+      this.prisma.team.count({ where }),
+      this.prisma.team.findMany({
+        where,
+        skip: query.skip,
+        take: query.take,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          game: { select: { slug: true } },
+          captain: { select: { id: true, name: true } },
+          _count: { select: { members: true } },
+        },
+      }),
+    ]);
+
+    return createPaginatedResponse(teams.map(toTeamSummaryResponse), query.page ?? 1, query.limit ?? 20, total);
+  }
+
+  async getAdminTeamById(id: string): Promise<TeamDetailResponse> {
+    const team = await this.prisma.team.findUnique({
+      where: { id },
+      include: {
+        game: { select: { slug: true } },
+        captain: { select: { id: true, name: true } },
+        members: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                gameProfiles: {
+                  select: { gameId: true, inGameName: true },
+                },
+              },
+            },
+          },
+          orderBy: { joinedAt: 'asc' },
+        },
+      },
+    });
+
+    if (!team) {
+      throw new NotFoundException(`Team with ID '${id}' not found`);
+    }
+
+    return toTeamDetailResponse(team);
+  }
 }
+
+

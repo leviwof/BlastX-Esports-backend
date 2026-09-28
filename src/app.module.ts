@@ -18,6 +18,9 @@ import { RealtimeModule } from './realtime/realtime.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ChallengesModule } from './challenges/challenges.module';
+import { AdminStatsModule } from './admin-stats/admin-stats.module';
+import { ContentModule } from './content/content.module';
+import { GamesModule } from './games/games.module';
 
 @Module({
   imports: [
@@ -34,6 +37,9 @@ import { ChallengesModule } from './challenges/challenges.module';
     TournamentsModule,
     MatchesModule,
     ChallengesModule,
+    AdminStatsModule,
+    ContentModule,
+    GamesModule,
     RealtimeModule,
     SchedulerModule,
     NotificationsModule,
@@ -42,3 +48,4 @@ import { ChallengesModule } from './challenges/challenges.module';
   providers: [AppService],
 })
 export class AppModule {}
+

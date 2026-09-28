@@ -1,4 +1,4 @@
-import { Team, TeamMember, User, GameProfile } from '@prisma/client';
+import { Team, TeamMember, User, GameProfile, Game } from '@prisma/client';
 
 export interface TeamMemberResponse {
   id: string;
@@ -28,6 +28,45 @@ export interface TeamResponse {
   accepting_substitutes: boolean;
   created_at: Date;
   members?: TeamMemberResponse[];
+}
+
+export interface TeamSummaryResponse {
+  id: string;
+  name: string;
+  tag: string;
+  logo_url: string | null;
+  game_slug: string;
+  captain: {
+    id: string;
+    name: string;
+  };
+  member_count: number;
+  accepting_substitutes: boolean;
+  created_at: Date;
+}
+
+export interface TeamDetailMemberResponse {
+  id: string;
+  user_id: string;
+  name: string;
+  in_game_name: string | null;
+  role: string;
+  joined_at: Date;
+}
+
+export interface TeamDetailResponse {
+  id: string;
+  name: string;
+  tag: string;
+  logo_url: string | null;
+  game_slug: string;
+  accepting_substitutes: boolean;
+  captain: {
+    id: string;
+    name: string;
+  };
+  members: TeamDetailMemberResponse[];
+  created_at: Date;
 }
 
 export const toTeamMemberResponse = (
@@ -71,4 +110,60 @@ export const toTeamResponse = (
   accepting_substitutes: team.acceptingSubstitutes ?? true,
   created_at: team.createdAt,
   ...(team.members ? { members: team.members.map(toTeamMemberResponse) } : {}),
+});
+
+export const toTeamSummaryResponse = (
+  team: Team & {
+    game: Pick<Game, 'slug'>;
+    captain: Pick<User, 'id' | 'name'>;
+    _count?: { members: number };
+  },
+): TeamSummaryResponse => ({
+  id: team.id,
+  name: team.name,
+  tag: team.tag,
+  logo_url: team.logoUrl,
+  game_slug: team.game.slug,
+  captain: {
+    id: team.captain.id,
+    name: team.captain.name,
+  },
+  member_count: team._count?.members ?? 0,
+  accepting_substitutes: team.acceptingSubstitutes ?? true,
+  created_at: team.createdAt,
+});
+
+export const toTeamDetailResponse = (
+  team: Team & {
+    game: Pick<Game, 'slug'>;
+    captain: Pick<User, 'id' | 'name'>;
+    members: (TeamMember & {
+      user: Pick<User, 'id' | 'name'> & {
+        gameProfiles?: Pick<GameProfile, 'gameId' | 'inGameName'>[];
+      };
+    })[];
+  },
+): TeamDetailResponse => ({
+  id: team.id,
+  name: team.name,
+  tag: team.tag,
+  logo_url: team.logoUrl,
+  game_slug: team.game.slug,
+  accepting_substitutes: team.acceptingSubstitutes ?? true,
+  captain: {
+    id: team.captain.id,
+    name: team.captain.name,
+  },
+  members: team.members.map((m) => {
+    const gameProfile = m.user.gameProfiles?.find((gp) => gp.gameId === team.gameId);
+    return {
+      id: m.id,
+      user_id: m.userId,
+      name: m.user.name,
+      in_game_name: gameProfile?.inGameName ?? null,
+      role: m.role,
+      joined_at: m.joinedAt,
+    };
+  }),
+  created_at: team.createdAt,
 });
