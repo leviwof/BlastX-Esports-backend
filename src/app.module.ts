@@ -1,10 +1,13 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { envValidationSchema } from './config/env.validation';
+import { JwtAuthGuard } from './common/jwt-auth.guard';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { MailModule } from './mail/mail.module';
@@ -25,6 +28,14 @@ import { GamesModule } from './games/games.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validationSchema: envValidationSchema }),
+    JwtModule.registerAsync({
+      global: true,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.getOrThrow<string>('JWT_SECRET'),
+        signOptions: { expiresIn: config.getOrThrow<string>('JWT_EXPIRES_IN') as never },
+      }),
+    }),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
     EventEmitterModule.forRoot(),
     PrismaModule,
@@ -45,7 +56,10 @@ import { GamesModule } from './games/games.module';
     NotificationsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+  ],
 })
 export class AppModule {}
 
