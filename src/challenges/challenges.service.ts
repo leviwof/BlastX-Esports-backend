@@ -488,7 +488,7 @@ export class ChallengesService implements OnModuleInit {
   private async getGoogleDriveAccessToken(): Promise<string | null> {
     const clean = (val?: string) => val?.trim().replace(/^["']|["']$/g, '') || '';
     const refreshToken = clean(process.env.GOOGLE_DRIVE_REFRESH_TOKEN);
-    const clientId = clean(process.env.GOOGLE_DRIVE_CLIENT_ID);
+    const clientId = clean(process.env.GOOGLE_DRIVE_CLIENT_ID) || clean(process.env.GOOGLE_CLIENT_IDS?.split(',')[0]);
     const clientSecret = clean(process.env.GOOGLE_DRIVE_CLIENT_SECRET);
 
     // 1. Primary: OAuth2 Refresh Token (uses personal 15TB My Drive quota)
