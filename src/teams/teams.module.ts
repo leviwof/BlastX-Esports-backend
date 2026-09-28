@@ -3,10 +3,9 @@ import { TeamsService } from './teams.service';
 import { TeamsController } from './teams.controller';
 import { AdminTeamsController } from './admin-teams.controller';
 import { PrismaModule } from '../prisma/prisma.module';
-import { JwtModule } from '@nestjs/jwt';
 
 @Module({
-  imports: [PrismaModule, JwtModule],
+  imports: [PrismaModule],
   controllers: [TeamsController, AdminTeamsController],
   providers: [TeamsService],
   exports: [TeamsService],

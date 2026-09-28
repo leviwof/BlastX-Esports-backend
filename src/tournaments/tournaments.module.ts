@@ -4,10 +4,9 @@ import { TournamentsController } from './tournaments.controller';
 import { AdminTournamentsController } from './admin-tournaments.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { MatchesModule } from '../matches/matches.module';
-import { JwtModule } from '@nestjs/jwt';
 
 @Module({
-  imports: [PrismaModule, MatchesModule, JwtModule],
+  imports: [PrismaModule, MatchesModule],
   controllers: [TournamentsController, AdminTournamentsController],
   providers: [TournamentsService],
   exports: [TournamentsService],
