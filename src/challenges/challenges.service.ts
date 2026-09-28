@@ -514,23 +514,8 @@ export class ChallengesService implements OnModuleInit {
       } catch (err) {
         this.logger.error(`Google Drive OAuth2 refresh error: ${err instanceof Error ? err.message : String(err)}`);
       }
-    }
-
-    // 2. Fallback: Service Account JWT
-    const clientEmail = process.env.GOOGLE_DRIVE_CLIENT_EMAIL;
-    const privateKey = process.env.GOOGLE_DRIVE_PRIVATE_KEY;
-    if (clientEmail && privateKey) {
-      try {
-        const auth = new JWT({
-          email: clientEmail.trim(),
-          key: privateKey.replace(/\\n/g, '\n'),
-          scopes: ['https://www.googleapis.com/auth/drive'],
-        });
-        const tokenRes = await auth.getAccessToken();
-        return tokenRes?.token ?? null;
-      } catch (err) {
-        this.logger.error(`Service Account token error: ${err instanceof Error ? err.message : String(err)}`);
-      }
+    } else {
+      this.logger.warn('Google Drive OAuth2 variables missing (GOOGLE_DRIVE_REFRESH_TOKEN, GOOGLE_DRIVE_CLIENT_ID, or GOOGLE_DRIVE_CLIENT_SECRET)');
     }
 
     return null;
