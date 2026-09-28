@@ -486,9 +486,10 @@ export class ChallengesService implements OnModuleInit {
   }
 
   private async getGoogleDriveAccessToken(): Promise<string | null> {
-    const refreshToken = process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
-    const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
+    const clean = (val?: string) => val?.trim().replace(/^["']|["']$/g, '') || '';
+    const refreshToken = clean(process.env.GOOGLE_DRIVE_REFRESH_TOKEN);
+    const clientId = clean(process.env.GOOGLE_DRIVE_CLIENT_ID);
+    const clientSecret = clean(process.env.GOOGLE_DRIVE_CLIENT_SECRET);
 
     // 1. Primary: OAuth2 Refresh Token (uses personal 15TB My Drive quota)
     if (refreshToken && clientId && clientSecret) {
@@ -497,9 +498,9 @@ export class ChallengesService implements OnModuleInit {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({
-            client_id: clientId.trim(),
-            client_secret: clientSecret.trim(),
-            refresh_token: refreshToken.trim(),
+            client_id: clientId,
+            client_secret: clientSecret,
+            refresh_token: refreshToken,
             grant_type: 'refresh_token',
           }),
         });
@@ -515,7 +516,11 @@ export class ChallengesService implements OnModuleInit {
         this.logger.error(`Google Drive OAuth2 refresh error: ${err instanceof Error ? err.message : String(err)}`);
       }
     } else {
-      this.logger.warn('Google Drive OAuth2 variables missing (GOOGLE_DRIVE_REFRESH_TOKEN, GOOGLE_DRIVE_CLIENT_ID, or GOOGLE_DRIVE_CLIENT_SECRET)');
+      const missing: string[] = [];
+      if (!refreshToken) missing.push('GOOGLE_DRIVE_REFRESH_TOKEN');
+      if (!clientId) missing.push('GOOGLE_DRIVE_CLIENT_ID');
+      if (!clientSecret) missing.push('GOOGLE_DRIVE_CLIENT_SECRET');
+      this.logger.warn(`Google Drive OAuth2 variables missing: ${missing.join(', ')}`);
     }
 
     return null;
@@ -529,7 +534,7 @@ export class ChallengesService implements OnModuleInit {
     const accessToken = await this.getGoogleDriveAccessToken();
     if (!accessToken) return null;
 
-    const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+    const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID?.trim().replace(/^["']|["']$/g, '');
 
     try {
       const boundary = '-------blastix3141592653589793';

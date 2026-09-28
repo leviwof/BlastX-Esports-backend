@@ -37,6 +37,8 @@ async function bootstrap(): Promise<void> {
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: 'cross-origin' },
+      frameguard: false, // Allow admin panel to embed video proofs in iframe
+      contentSecurityPolicy: false,
     }),
   );
   app.enableCors({ origin: true, credentials: true });
