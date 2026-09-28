@@ -9,6 +9,9 @@ export class ResponseInterceptor implements NestInterceptor {
         if (data && typeof data === 'object' && 'status' in data && (data as any).status === 'success') {
           return data;
         }
+        if (data && typeof data === 'object' && 'success' in data) {
+          return data;
+        }
         return { status: 'success', data };
       }),
     );

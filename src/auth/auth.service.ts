@@ -23,4 +23,18 @@ export class AuthService {
   async register(dto: RegisterDto): Promise<UserResponse> { await this.verifyOtp(dto.email, dto.otp); if (await this.users.findByEmail(dto.email)) throw new BadRequestException('An account already exists for this email'); return this.issue(await this.users.create({ name: dto.name, email: dto.email })); }
   async verifyToken(token: string): Promise<{ valid: true }> { try { const payload = await this.jwt.verifyAsync<{ sub: string }>(token); const user = await this.users.findById(payload.sub); if (!user?.isActive) throw new Error(); return { valid: true }; } catch { throw new UnauthorizedException('Invalid or expired token'); } }
   async socialLogin(token: string): Promise<UserResponse> { const identity = await this.google.verify(token); let user = await this.users.findByGoogleId(identity.googleId); if (!user) { user = await this.users.findByEmail(identity.email); user = user ? await this.users.update(user.id, { googleId: identity.googleId }) : await this.users.create({ name: identity.name, email: identity.email, googleId: identity.googleId, profilePic: identity.picture }); } if (!user.isActive) throw new UnauthorizedException('Account is inactive'); return this.issue(user); }
+  async logout(token?: string, userId?: string): Promise<{ success: boolean; message: string }> {
+    if (token) {
+      try {
+        const payload = (await this.jwt.decode(token)) as { exp?: number };
+        const ttl = payload?.exp
+          ? Math.max(payload.exp - Math.floor(Date.now() / 1000), 60)
+          : 7 * 86400;
+        await this.redis.client.set(`bl_${token}`, '1', 'EX', ttl);
+      } catch {
+        // Redis offline fallback - no throw
+      }
+    }
+    return { success: true, message: 'Logged out successfully' };
+  }
 }
