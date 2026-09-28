@@ -4,6 +4,8 @@ import { NestFactory } from '@nestjs/core';
 
 // Ensure Node.js prefers IPv4 to prevent ENETUNREACH on cloud environments (like Railway) without IPv6 routing
 dns.setDefaultResultOrder?.('ipv4first');
+import * as path from 'path';
+import * as express from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { ResponseInterceptor } from './common/response.interceptor';
@@ -32,8 +34,17 @@ async function bootstrap(): Promise<void> {
 
   const app = await NestFactory.create(AppModule);
 
-  app.use(helmet());
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
   app.enableCors({ origin: true, credentials: true });
+
+  // Serve uploaded proof videos statically so admin panel and apps can stream them
+  const uploadsDir = path.join(process.cwd(), 'uploads');
+  app.use('/uploads', express.static(uploadsDir));
+
   app.setGlobalPrefix('v1', { exclude: ['health'] }); // /health stays unprefixed for Railway healthchecks
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),

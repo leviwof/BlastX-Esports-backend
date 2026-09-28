@@ -208,7 +208,7 @@ export class ChallengesService implements OnModuleInit {
       throw new BadRequestException('Invalid file type. Only video files (.mp4) are accepted as match proof.');
     }
 
-    // Ensure uploads directory exists
+    // Ensure local uploads directory exists
     const uploadDir = path.join(process.cwd(), 'uploads', 'proofs');
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
@@ -219,7 +219,33 @@ export class ChallengesService implements OnModuleInit {
     fs.writeFileSync(filePath, file.buffer);
 
     const baseUrl = process.env.BASE_URL || 'https://blastx-esports-backend-production-4b5f.up.railway.app';
-    const proofUrl = `${baseUrl}/uploads/proofs/${uniqueFilename}`;
+    let proofUrl = `${baseUrl}/uploads/proofs/${uniqueFilename}`;
+
+    // Upload to Supabase Storage bucket 'proofs' if configured (permanent cloud storage)
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+    if (supabaseUrl && supabaseKey) {
+      try {
+        const uploadRes = await fetch(`${supabaseUrl}/storage/v1/object/proofs/${uniqueFilename}`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': file.mimetype || 'video/mp4',
+            'x-upsert': 'true',
+          },
+          body: file.buffer,
+        });
+
+        if (uploadRes.ok) {
+          proofUrl = `${supabaseUrl}/storage/v1/object/public/proofs/${uniqueFilename}`;
+          this.logger.log(`Video recording uploaded to Supabase Storage: ${proofUrl}`);
+        } else {
+          this.logger.warn(`Supabase Storage upload returned status ${uploadRes.status}, fallback to local static URL`);
+        }
+      } catch (uploadErr) {
+        this.logger.warn(`Supabase Storage upload error, fallback to local: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
+      }
+    }
 
     // Update user challenge status to PROOF_SUBMITTED and mark completed for verification
     await this.prisma.userChallenge.upsert({
