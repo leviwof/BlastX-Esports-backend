@@ -1,4 +1,4 @@
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, IsUrl, Length, Matches, ValidateIf, ValidateNested } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, Length, Matches, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class PlayerDetailsDto {
@@ -28,9 +28,13 @@ export class CreateTournamentTeamDto {
 
   @IsOptional()
   @IsString()
-  @ValidateIf((o) => typeof o.logo_url === 'string' && o.logo_url.trim().length > 0)
-  @IsUrl()
+  @MaxLength(1000)
   logo_url?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  logoUrl?: string;
 
   @IsOptional()
   @IsBoolean()

@@ -566,7 +566,32 @@ export class TournamentsService {
   }
 
   async createTournamentTeam(userId: string, tournamentId: string, dto: CreateTournamentTeamDto) {
-    const tournament = await this.getTournamentEntity(tournamentId);
+    const cleanName = dto.name.trim();
+    const cleanTag = dto.tag.trim().toUpperCase();
+    const rawLogo = dto.logo_url ?? dto.logoUrl;
+    const sanitizedLogoUrl = rawLogo && rawLogo.trim().length > 0 ? rawLogo.trim() : null;
+
+    // Parallel pre-flight fetch
+    const [tournament, currentCount, userTeams, existingName, maxSlot] = await Promise.all([
+      this.getTournamentEntity(tournamentId),
+      this.prisma.tournamentRegistration.count({
+        where: { tournamentId, status: RegistrationStatus.CONFIRMED },
+      }),
+      this.prisma.teamMember.findMany({
+        where: { userId },
+        select: { teamId: true },
+      }),
+      this.prisma.team.findFirst({
+        where: {
+          game: { tournaments: { some: { id: tournamentId } } },
+          name: { equals: cleanName, mode: 'insensitive' },
+        },
+      }),
+      this.prisma.tournamentRegistration.aggregate({
+        where: { tournamentId },
+        _max: { slotNumber: true },
+      }),
+    ]);
 
     if (tournament.status !== TournamentStatus.REGISTRATION_OPEN) {
       throw new BadRequestException(`Tournament is not open for registration (status is ${tournament.status})`);
@@ -577,12 +602,12 @@ export class TournamentsService {
       throw new BadRequestException('Tournament registration window is currently closed');
     }
 
-    // Check capacity
-    const currentCount = await this.prisma.tournamentRegistration.count({
-      where: { tournamentId, status: RegistrationStatus.CONFIRMED },
-    });
     if (currentCount >= tournament.maxSlots) {
       throw new BadRequestException('Tournament is already full');
+    }
+
+    if (existingName) {
+      throw new BadRequestException(`Team name '${cleanName}' is already taken for this game`);
     }
 
     // Must have Game Profile for tournament's game
@@ -593,14 +618,14 @@ export class TournamentsService {
       profile = await this.prisma.gameProfile.upsert({
         where: { unique_user_game: { userId, gameId: tournament.gameId } },
         update: {
-          inGameUid: dto.player.uid,
-          inGameName: dto.player.ign,
+          inGameUid: dto.player.uid.trim(),
+          inGameName: dto.player.ign.trim(),
         },
         create: {
           userId,
           gameId: tournament.gameId,
-          inGameUid: dto.player.uid,
-          inGameName: dto.player.ign,
+          inGameUid: dto.player.uid.trim(),
+          inGameName: dto.player.ign.trim(),
         },
       });
     }
@@ -609,12 +634,7 @@ export class TournamentsService {
     }
 
     // Verify user is not already registered in this tournament
-    const userTeams = await this.prisma.teamMember.findMany({
-      where: { userId },
-      select: { teamId: true },
-    });
     const teamIds = userTeams.map((t) => t.teamId);
-
     const existingReg = await this.prisma.tournamentRegistration.findFirst({
       where: {
         tournamentId,
@@ -629,37 +649,20 @@ export class TournamentsService {
       throw new BadRequestException('You are already registered or part of a team in this tournament');
     }
 
-    // Team name uniqueness per game
-    const existingName = await this.prisma.team.findFirst({
-      where: {
-        gameId: tournament.gameId,
-        name: { equals: dto.name, mode: 'insensitive' },
-      },
-    });
-    if (existingName) {
-      throw new BadRequestException(`Team name '${dto.name}' is already taken for this game`);
-    }
-
     let inviteCode = randomBytes(4).toString('hex').toUpperCase();
     while (await this.prisma.team.findUnique({ where: { inviteCode } })) {
       inviteCode = randomBytes(4).toString('hex').toUpperCase();
     }
 
-    const maxSlot = await this.prisma.tournamentRegistration.aggregate({
-      where: { tournamentId },
-      _max: { slotNumber: true },
-    });
     const nextSlot = (maxSlot._max.slotNumber || 0) + 1;
 
-    const sanitizedLogoUrl =
-      dto.logo_url && dto.logo_url.trim().length > 0 ? dto.logo_url.trim() : null;
-
-    const team = await this.prisma.$transaction(async (tx) => {
-      const createdTeam = await tx.team.create({
+    // Single pipelined atomic transaction
+    const [team] = await this.prisma.$transaction([
+      this.prisma.team.create({
         data: {
           gameId: tournament.gameId,
-          name: dto.name,
-          tag: dto.tag.toUpperCase(),
+          name: cleanName,
+          tag: cleanTag,
           logoUrl: sanitizedLogoUrl,
           acceptingSubstitutes: dto.accepting_substitutes ?? true,
           captainId: userId,
@@ -668,6 +671,14 @@ export class TournamentsService {
             create: {
               userId,
               role: TeamMemberRole.CAPTAIN,
+            },
+          },
+          registrations: {
+            create: {
+              tournamentId,
+              userId,
+              status: RegistrationStatus.CONFIRMED,
+              slotNumber: nextSlot,
             },
           },
         },
@@ -681,25 +692,12 @@ export class TournamentsService {
             },
           },
         },
-      });
-
-      await tx.tournamentRegistration.create({
-        data: {
-          tournamentId,
-          userId,
-          teamId: createdTeam.id,
-          status: RegistrationStatus.CONFIRMED,
-          slotNumber: nextSlot,
-        },
-      });
-
-      await tx.tournament.update({
+      }),
+      this.prisma.tournament.update({
         where: { id: tournamentId },
         data: { registeredCount: { increment: 1 } },
-      });
-
-      return createdTeam;
-    });
+      }),
+    ]);
 
     return {
       ...toTeamResponse(team as any),
