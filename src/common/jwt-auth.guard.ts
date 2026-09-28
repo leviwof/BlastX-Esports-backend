@@ -18,9 +18,9 @@ export class JwtAuthGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest<Request & { user?: JwtUser }>();
     const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
-    if (!token) throw new UnauthorizedException('Authentication token is required');
+    if (!token) throw new UnauthorizedException('Unauthorized or invalid token');
     try { request.user = await this.jwt.verifyAsync<JwtUser>(token); return true; }
-    catch { throw new UnauthorizedException('Invalid or expired token'); }
+    catch { throw new UnauthorizedException('Unauthorized or invalid token'); }
   }
 }
 

@@ -35,6 +35,11 @@ export class AuthService {
         // Redis offline fallback - no throw
       }
     }
+    if (userId) {
+      try {
+        await this.redis.client.del(`fcm:${userId}`, `session:${userId}`, `device:${userId}`);
+      } catch {}
+    }
     return { success: true, message: 'Logged out successfully' };
   }
 }
