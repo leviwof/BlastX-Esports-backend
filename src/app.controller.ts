@@ -2,6 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { AppService } from './app.service';
 import { getBuildInfo } from './common/build-info';
 import { healthStatus } from './common/health-status';
+import { Public } from './common/public.decorator';
 import { PrismaService } from './prisma/prisma.service';
 
 export interface HealthResponse {
@@ -28,6 +29,7 @@ async function withTimeout(promise: Promise<boolean>, ms: number): Promise<boole
   }
 }
 
+@Public()
 @Controller()
 export class AppController {
   constructor(
