@@ -477,28 +477,68 @@ export class ChallengesService implements OnModuleInit {
     return toAdminProofResponse(updated);
   }
 
+  private async getGoogleDriveAccessToken(): Promise<string | null> {
+    const refreshToken = process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
+    const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
+
+    // 1. Primary: OAuth2 Refresh Token (uses personal 15TB My Drive quota)
+    if (refreshToken && clientId && clientSecret) {
+      try {
+        const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: clientId.trim(),
+            client_secret: clientSecret.trim(),
+            refresh_token: refreshToken.trim(),
+            grant_type: 'refresh_token',
+          }),
+        });
+
+        if (tokenRes.ok) {
+          const data = (await tokenRes.json()) as { access_token: string };
+          return data.access_token;
+        } else {
+          const err = await tokenRes.text();
+          this.logger.error(`Google Drive OAuth2 token exchange failed (${tokenRes.status}): ${err}`);
+        }
+      } catch (err) {
+        this.logger.error(`Google Drive OAuth2 refresh error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // 2. Fallback: Service Account JWT
+    const clientEmail = process.env.GOOGLE_DRIVE_CLIENT_EMAIL;
+    const privateKey = process.env.GOOGLE_DRIVE_PRIVATE_KEY;
+    if (clientEmail && privateKey) {
+      try {
+        const auth = new JWT({
+          email: clientEmail.trim(),
+          key: privateKey.replace(/\\n/g, '\n'),
+          scopes: ['https://www.googleapis.com/auth/drive'],
+        });
+        const tokenRes = await auth.getAccessToken();
+        return tokenRes?.token ?? null;
+      } catch (err) {
+        this.logger.error(`Service Account token error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    return null;
+  }
+
   private async uploadToGoogleDrive(
     filename: string,
     mimeType: string,
     buffer: Buffer,
   ): Promise<string | null> {
-    const clientEmail = process.env.GOOGLE_DRIVE_CLIENT_EMAIL;
-    const privateKey = process.env.GOOGLE_DRIVE_PRIVATE_KEY;
+    const accessToken = await this.getGoogleDriveAccessToken();
+    if (!accessToken) return null;
+
     const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
 
-    if (!clientEmail || !privateKey) return null;
-
     try {
-      const auth = new JWT({
-        email: clientEmail,
-        key: privateKey.replace(/\\n/g, '\n'),
-        scopes: ['https://www.googleapis.com/auth/drive'],
-      });
-
-      const tokenRes = await auth.getAccessToken();
-      const accessToken = tokenRes?.token;
-      if (!accessToken) throw new Error('Could not get Google Drive access token');
-
       const boundary = '-------blastix3141592653589793';
       const delimiter = `\r\n--${boundary}\r\n`;
       const closeDelimiter = `\r\n--${boundary}--`;
@@ -563,7 +603,7 @@ export class ChallengesService implements OnModuleInit {
       }
 
       const previewUrl = `https://drive.google.com/file/d/${fileId}/preview`;
-      this.logger.log(`Proof video uploaded to Google Drive (15TB): ${previewUrl}`);
+      this.logger.log(`Proof video uploaded to 15TB Google Drive: ${previewUrl}`);
       return previewUrl;
     } catch (err) {
       this.logger.error(
