@@ -4,6 +4,14 @@ import { PaginationQueryDto } from '../../common/pagination.dto';
 
 export class FilterTournamentQueryDto extends PaginationQueryDto {
   @IsOptional()
+  @IsString()
+  game?: string;
+
+  @IsOptional()
+  @IsString()
+  game_slug?: string;
+
+  @IsOptional()
   @IsEnum(TournamentStatus)
   status?: TournamentStatus;
 

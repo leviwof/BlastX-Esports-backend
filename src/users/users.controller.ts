@@ -43,10 +43,13 @@ export class UsersController {
   }
 
   @Get('me/game-profile')
-  async getGameProfile(@CurrentUser() user: JwtUser, @Query('game_slug') gameSlug: string = 'free_fire'): Promise<GameProfileResponse> {
+  async getGameProfile(
+    @CurrentUser() user: JwtUser,
+    @Query('game_slug') gameSlug: string = 'free_fire',
+  ): Promise<GameProfileResponse | null> {
     const profile = await this.usersService.getGameProfile(user.sub, gameSlug);
     if (!profile) {
-      throw new NotFoundException(`Game profile for '${gameSlug}' not found`);
+      return null;
     }
     return toGameProfileResponse(profile);
   }

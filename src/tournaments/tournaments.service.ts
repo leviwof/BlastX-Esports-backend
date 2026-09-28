@@ -172,6 +172,16 @@ export class TournamentsService {
     if (dto.team_mode) where.teamMode = dto.team_mode;
     if (dto.format) where.format = dto.format;
     if (dto.map) where.map = { contains: dto.map, mode: 'insensitive' };
+    if (dto.game || dto.game_slug) {
+      const g = (dto.game_slug || dto.game)!.trim();
+      where.game = {
+        OR: [
+          { slug: { equals: g, mode: 'insensitive' } },
+          { name: { equals: g, mode: 'insensitive' } },
+          { name: { contains: g, mode: 'insensitive' } },
+        ],
+      };
+    }
     if (dto.date_from || dto.date_to) {
       where.startsAt = {};
       if (dto.date_from) where.startsAt.gte = new Date(dto.date_from);

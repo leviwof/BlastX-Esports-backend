@@ -2,6 +2,7 @@ import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, Req } fro
 import { TournamentsService } from './tournaments.service';
 import { MatchesService } from '../matches/matches.service';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
+import { Public } from '../common/public.decorator';
 import { CurrentUser, JwtUser } from '../common/current-user.decorator';
 import { FilterTournamentQueryDto } from './dto/filter-tournament.dto';
 import { RegisterTournamentDto } from './dto/register-tournament.dto';
@@ -26,6 +27,7 @@ export class TournamentsController {
     private readonly jwtService: JwtService,
   ) {}
 
+  @Public()
   @Get()
   async getTournaments(@Query() query: FilterTournamentQueryDto): Promise<PaginatedResult<TournamentResponse>> {
     const result = await this.tournamentsService.getTournaments(query);
@@ -42,6 +44,7 @@ export class TournamentsController {
     return items.map((item) => toTournamentResponse(item, user.sub));
   }
 
+  @Public()
   @Get(':id')
   async getTournamentById(@Param('id') id: string, @Req() req: Request): Promise<TournamentResponse> {
     let currentUserId: string | undefined;
@@ -94,22 +97,26 @@ export class TournamentsController {
     return this.tournamentsService.getRoomCredentials(user.sub, id);
   }
 
+  @Public()
   @Get(':id/participants')
   async getParticipants(@Param('id') id: string): Promise<TournamentRegistrationResponse[]> {
     const items = await this.tournamentsService.getParticipants(id);
     return items.map(toTournamentRegistrationResponse);
   }
 
+  @Public()
   @Get(':id/leaderboard')
   async getLeaderboard(@Param('id') id: string): Promise<LeaderboardEntry[]> {
     return this.matchesService.getLeaderboard(id);
   }
 
+  @Public()
   @Get(':id/bracket')
   async getBracket(@Param('id') id: string): Promise<TournamentBracketResponse> {
     return this.tournamentsService.getTournamentBracket(id);
   }
 
+  @Public()
   @Get(':id/roadmap')
   async getRoadmap(@Param('id') id: string): Promise<TournamentBracketResponse> {
     return this.tournamentsService.getTournamentBracket(id);
