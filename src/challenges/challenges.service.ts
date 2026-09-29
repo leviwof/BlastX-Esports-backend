@@ -264,12 +264,16 @@ export class ChallengesService implements OnModuleInit {
       throw new BadRequestException('Invalid file type. Only video files (.mp4) are accepted as match proof.');
     }
 
-    const uniqueFilename = `${challengeId}_${userId}_${Date.now()}.mp4`;
+    // Resolve the real video container/mime from the bytes so Google Drive stores a
+    // playable type instead of the raw (often application/octet-stream) client mime.
+    const { mimeType: videoMime, ext } = this.resolveVideoType(file.buffer, file.originalname, file.mimetype);
+
+    const uniqueFilename = `${challengeId}_${userId}_${Date.now()}.${ext}`;
     const baseUrl = process.env.BASE_URL || 'https://blastx-esports-backend-production-4b5f.up.railway.app';
     let proofUrl = `${baseUrl}/uploads/proofs/${uniqueFilename}`;
 
     // 1. Primary: Google Drive (15TB Cloud Storage)
-    const gdriveUrl = await this.uploadToGoogleDrive(uniqueFilename, file.mimetype, file.buffer);
+    const gdriveUrl = await this.uploadToGoogleDrive(uniqueFilename, videoMime, file.buffer);
     if (gdriveUrl) {
       proofUrl = gdriveUrl;
     } else {
@@ -284,7 +288,7 @@ export class ChallengesService implements OnModuleInit {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${supabaseKey}`,
-              'Content-Type': file.mimetype || 'video/mp4',
+              'Content-Type': videoMime,
               'x-upsert': 'true',
             },
             body: new Uint8Array(file.buffer),
@@ -581,6 +585,60 @@ export class ChallengesService implements OnModuleInit {
     return null;
   }
 
+  /**
+   * Determines the true video container/mime by sniffing the file's magic bytes,
+   * falling back to the client-declared mime and finally to mp4. This prevents
+   * generic types like application/octet-stream (common from mobile multipart
+   * uploads) from being stored on Google Drive, which makes Drive reject the
+   * inline preview and hand downloads off to an external player (e.g. VLC).
+   */
+  private resolveVideoType(
+    buffer: Buffer,
+    originalname: string,
+    clientMime?: string,
+  ): { mimeType: string; ext: string } {
+    // MP4 / QuickTime: an ISO Base Media 'ftyp' box at byte offset 4.
+    if (buffer.length >= 12 && buffer.toString('ascii', 4, 8) === 'ftyp') {
+      const brand = buffer.toString('ascii', 8, 12).toLowerCase();
+      if (brand.startsWith('qt')) {
+        return { mimeType: 'video/quicktime', ext: 'mov' };
+      }
+      return { mimeType: 'video/mp4', ext: 'mp4' };
+    }
+
+    // Matroska / WebM: EBML header 0x1A45DFA3.
+    if (
+      buffer.length >= 4 &&
+      buffer[0] === 0x1a &&
+      buffer[1] === 0x45 &&
+      buffer[2] === 0xdf &&
+      buffer[3] === 0xa3
+    ) {
+      return { mimeType: 'video/webm', ext: 'webm' };
+    }
+
+    const mimeExtMap: Record<string, string> = {
+      'video/mp4': 'mp4',
+      'video/quicktime': 'mov',
+      'video/webm': 'webm',
+      'video/x-matroska': 'mkv',
+    };
+
+    // Fall back to a real client-declared video type (ignore octet-stream/blank).
+    if (clientMime && mimeExtMap[clientMime]) {
+      return { mimeType: clientMime, ext: mimeExtMap[clientMime] };
+    }
+
+    // Last resort: honour a known extension on the original filename, else mp4.
+    const lower = (originalname || '').toLowerCase();
+    for (const [mime, e] of Object.entries(mimeExtMap)) {
+      if (lower.endsWith(`.${e}`)) {
+        return { mimeType: mime, ext: e };
+      }
+    }
+    return { mimeType: 'video/mp4', ext: 'mp4' };
+  }
+
   private async uploadToGoogleDrive(
     filename: string,
     mimeType: string,
@@ -598,6 +656,7 @@ export class ChallengesService implements OnModuleInit {
 
       const metadata: Record<string, any> = {
         name: filename,
+        mimeType,
         description: 'BlastiX match proof recording',
       };
       if (folderId && folderId.trim()) {
