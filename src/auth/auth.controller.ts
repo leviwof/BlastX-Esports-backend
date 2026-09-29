@@ -33,7 +33,7 @@ export class AuthController {
 
   @Public()
   @Post('social-login')
-  social(@Body() dto: SocialLoginDto) { return this.service.socialLogin(dto.token); }
+  social(@Body() dto: SocialLoginDto) { return this.service.socialLogin(dto); }
 
   @Post('logout')
   async logout(@CurrentUser() user: JwtUser, @Req() req: Request) {
