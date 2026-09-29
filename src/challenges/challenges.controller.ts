@@ -14,6 +14,7 @@ import { CurrentUser, JwtUser } from '../common/current-user.decorator';
 import { ChallengesService } from './challenges.service';
 import { SubmitProofDto, UploadedProofFile } from './dto/submit-proof.dto';
 import { ChallengeResponse, SubmitProofResponse } from './challenge.mapper';
+import { ClaimChallengeResponseData } from '../common/rank-system';
 
 @Controller('challenges')
 @UseGuards(JwtAuthGuard)
@@ -29,7 +30,7 @@ export class ChallengesController {
   async claimChallenge(
     @CurrentUser() user: JwtUser,
     @Param('id') id: string,
-  ): Promise<ChallengeResponse> {
+  ): Promise<{ success: true; data: ClaimChallengeResponseData }> {
     return this.challengesService.claimChallenge(user.sub, id);
   }
 

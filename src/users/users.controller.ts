@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Put, Post, Body, Query, UseGuards, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Patch, Put, Post, Body, Query, Param, UseGuards, NotFoundException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { CurrentUser, JwtUser } from '../common/current-user.decorator';
@@ -18,6 +18,25 @@ export class UsersController {
       throw new NotFoundException('User profile not found');
     }
     return profile;
+  }
+
+  @Get('me/rank')
+  async getMyRank(@CurrentUser() user: JwtUser) {
+    const data = await this.usersService.getUserRank(user.sub);
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  @Get(':userId/rank')
+  async getUserRankById(@Param('userId') userId: string, @CurrentUser() user: JwtUser) {
+    const targetUserId = userId === 'me' ? user.sub : userId;
+    const data = await this.usersService.getUserRank(targetUserId);
+    return {
+      success: true,
+      data,
+    };
   }
 
   @Patch('me')

@@ -13,6 +13,7 @@ import {
   toAdminUserResponse,
 } from './user.mapper';
 import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
+import { calculateRank, PlayerRankResponse } from '../common/rank-system';
 
 
 @Injectable()
@@ -271,6 +272,51 @@ export class UsersService {
     });
 
     return toAdminUserResponse(updated);
+  }
+
+  async getUserRank(userId: string): Promise<PlayerRankResponse> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, xp: true, rank: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'User does not exist.',
+      });
+    }
+
+    const totalXP = Math.max(0, user.xp || 0);
+    const rankCalc = calculateRank(totalXP);
+
+    if (user.rank !== rankCalc.currentRank.number) {
+      this.prisma.user.update({
+        where: { id: userId },
+        data: { rank: rankCalc.currentRank.number },
+      }).catch(() => {});
+    }
+
+    return {
+      userId: user.id,
+      totalXP,
+      rank: {
+        number: rankCalc.currentRank.number,
+        name: rankCalc.currentRank.name,
+        minXP: rankCalc.currentRank.minXP,
+        maxXP: rankCalc.nextRank ? rankCalc.nextRank.minXP : null,
+      },
+      nextRank: rankCalc.nextRank
+        ? {
+            number: rankCalc.nextRank.number,
+            name: rankCalc.nextRank.name,
+            minXP: rankCalc.nextRank.minXP,
+          }
+        : null,
+      xpRemaining: rankCalc.xpRemaining,
+      progress: rankCalc.progress,
+      isMaxRank: rankCalc.isMaxRank,
+    };
   }
 }
 

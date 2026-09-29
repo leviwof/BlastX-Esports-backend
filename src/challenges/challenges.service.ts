@@ -23,6 +23,7 @@ import { CreateChallengeDto } from './dto/create-challenge.dto';
 import { UpdateChallengeDto } from './dto/update-challenge.dto';
 import { ListProofsQuery } from './dto/list-proofs.query';
 import { RejectProofDto } from './dto/reject-proof.dto';
+import { calculateRank, ClaimChallengeResponseData } from '../common/rank-system';
 import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -127,13 +128,28 @@ export class ChallengesService implements OnModuleInit {
     return challenges.map((ch) => toChallengeResponse(ch, progressMap.get(ch.id)));
   }
 
-  async claimChallenge(userId: string, challengeId: string): Promise<ChallengeResponse> {
+  async claimChallenge(userId: string, challengeId: string): Promise<{ success: true; data: ClaimChallengeResponseData }> {
     const challenge = await this.prisma.challenge.findUnique({
       where: { id: challengeId },
     });
 
     if (!challenge) {
-      throw new NotFoundException(`Challenge with ID '${challengeId}' not found`);
+      throw new NotFoundException({
+        code: 'CHALLENGE_NOT_FOUND',
+        message: 'Challenge does not exist.',
+      });
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, xp: true, rank: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'User does not exist.',
+      });
     }
 
     const userChallenge = await this.prisma.userChallenge.findUnique({
@@ -142,7 +158,10 @@ export class ChallengesService implements OnModuleInit {
 
     // Check if already claimed
     if (userChallenge?.isClaimed || userChallenge?.status === ChallengeStatus.CLAIMED) {
-      throw new BadRequestException('Reward has already been claimed for this challenge');
+      throw new BadRequestException({
+        code: 'CHALLENGE_ALREADY_CLAIMED',
+        message: 'Reward for this challenge has already been claimed.',
+      });
     }
 
     // Check if eligible / completed
@@ -151,11 +170,22 @@ export class ChallengesService implements OnModuleInit {
       (userChallenge && userChallenge.currentProgress >= challenge.targetProgress);
 
     if (!isCompleted) {
-      throw new BadRequestException('Challenge criteria not met yet. Complete the challenge before claiming.');
+      throw new BadRequestException({
+        code: 'CHALLENGE_NOT_COMPLETED',
+        message: 'Challenge is not completed yet.',
+      });
     }
 
-    // Transactionally mark claimed and award XP to user
-    const [updatedProgress] = await this.prisma.$transaction([
+    const previousTotalXP = Math.max(0, user.xp || 0);
+    const previousRankInfo = calculateRank(previousTotalXP);
+    const claimedXP = challenge.rewardXp;
+    const newTotalXP = previousTotalXP + claimedXP;
+    const newRankInfo = calculateRank(newTotalXP);
+
+    const rankChanged = newRankInfo.currentRank.number !== previousRankInfo.currentRank.number;
+
+    // Transactionally mark claimed and award XP + rank to user
+    await this.prisma.$transaction([
       this.prisma.userChallenge.upsert({
         where: { unique_user_challenge: { userId, challengeId } },
         update: {
@@ -176,12 +206,37 @@ export class ChallengesService implements OnModuleInit {
       this.prisma.user.update({
         where: { id: userId },
         data: {
-          xp: { increment: challenge.rewardXp },
+          xp: newTotalXP,
+          rank: newRankInfo.currentRank.number,
         },
       }),
     ]);
 
-    return toChallengeResponse(challenge, updatedProgress);
+    const resultData: ClaimChallengeResponseData = {
+      challengeId: challenge.id,
+      claimedXP,
+      totalXP: newTotalXP,
+      rank: {
+        number: newRankInfo.currentRank.number,
+        name: newRankInfo.currentRank.name,
+        minXP: newRankInfo.currentRank.minXP,
+        nextRankMinXP: newRankInfo.nextRank ? newRankInfo.nextRank.minXP : null,
+      },
+      rankChanged,
+    };
+
+    if (rankChanged) {
+      resultData.previousRank = {
+        number: previousRankInfo.currentRank.number,
+        name: previousRankInfo.currentRank.name,
+        minXP: previousRankInfo.currentRank.minXP,
+      };
+    }
+
+    return {
+      success: true,
+      data: resultData,
+    };
   }
 
   async submitProof(
