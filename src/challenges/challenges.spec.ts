@@ -154,11 +154,23 @@ describe('ChallengesService', () => {
       );
     });
 
+    it('throws 400 if video file is smaller than 10KB (corrupted or empty)', async () => {
+      const smallFile: any = {
+        originalname: 'corrupt.mp4',
+        mimetype: 'video/mp4',
+        buffer: Buffer.alloc(1024), // 1 KB
+      };
+
+      await expect(service.submitProof('user_123', 'c1', smallFile)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
     it('throws 400 if file is not a video format', async () => {
       const fakeFile: any = {
         originalname: 'proof.txt',
         mimetype: 'text/plain',
-        buffer: Buffer.from('hello'),
+        buffer: Buffer.alloc(20 * 1024),
       };
 
       await expect(service.submitProof('user_123', 'c1', fakeFile)).rejects.toThrow(
@@ -170,7 +182,7 @@ describe('ChallengesService', () => {
       const fakeFile: any = {
         originalname: 'recording_480p.mp4',
         mimetype: 'video/mp4',
-        buffer: Buffer.from('mock video bytes'),
+        buffer: Buffer.alloc(20 * 1024), // 20 KB valid test video
       };
 
       const result = await service.submitProof('user_123', 'c1', fakeFile, '480p');
