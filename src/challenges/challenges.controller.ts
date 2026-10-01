@@ -38,7 +38,7 @@ export class ChallengesController {
   @UseInterceptors(
     FileInterceptor('file', {
       limits: {
-        fileSize: 60 * 1024 * 1024, // 60MB max
+        fileSize: 120 * 1024 * 1024, // 120 MB max — supports a full 25-min Free Fire match at 480p/600Kbps (~107 MB)
       },
     }),
   )

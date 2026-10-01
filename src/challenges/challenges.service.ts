@@ -257,13 +257,17 @@ export class ChallengesService implements OnModuleInit {
       throw new BadRequestException('Missing proof video file. An .mp4 match screen recording is required.');
     }
 
-    // Validate minimum file size (reject empty, truncated or corrupted recordings < 10 KB like 36 B / 1 KB)
-    const MIN_VIDEO_SIZE = 10 * 1024; // 10 KB
+    // Validate minimum file size (reject empty, truncated or corrupted recordings < 100 KB).
+    // A genuine 25-min Free Fire match at 480p / 600 Kbps produces ~107 MB (max cap: 120 MB);
+    // anything below 100 KB is clearly a corrupt or zero-byte save from the recorder.
+    const MIN_VIDEO_SIZE = 100 * 1024; // 100 KB
     const fileBytes = file.buffer ? file.buffer.length : 0;
     if (fileBytes < MIN_VIDEO_SIZE) {
       const formattedSize = fileBytes < 1024 ? `${fileBytes} B` : `${(fileBytes / 1024).toFixed(1)} KB`;
       throw new BadRequestException(
-        `Uploaded proof video is incomplete or corrupted (size: ${formattedSize}). An actual match screen recording of at least 10 KB is required.`,
+        `Uploaded proof video is too small (size: ${formattedSize}). ` +
+        `The recording appears to be empty or corrupt — a valid match screen recording must be at least 100 KB. ` +
+        `Please ensure the screen recorder saved the video properly before uploading.`,
       );
     }
 
