@@ -1,4 +1,16 @@
-import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  Req,
+  Res,
+  Header,
+} from '@nestjs/common';
 import { TournamentsService } from './tournaments.service';
 import { MatchesService } from '../matches/matches.service';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
@@ -14,9 +26,8 @@ import {
   TournamentRegistrationResponse,
   TournamentBracketResponse,
 } from './tournament.mapper';
-import { PaginatedResult } from '../common/pagination.dto';
 import { JwtService } from '@nestjs/jwt';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { LeaderboardEntry } from '../matches/match.mapper';
 
 @Controller('tournaments')
@@ -29,11 +40,16 @@ export class TournamentsController {
 
   @Public()
   @Get()
-  async getTournaments(@Query() query: FilterTournamentQueryDto): Promise<PaginatedResult<TournamentResponse>> {
+  async getTournaments(@Query() query: FilterTournamentQueryDto) {
     const result = await this.tournamentsService.getTournaments(query);
     return {
-      ...result,
-      items: result.items.map((item) => toTournamentResponse(item)),
+      status: 'success',
+      data: result.items.map((item) => toTournamentResponse(item)),
+      // Chip counts: independent of the active status/q filter
+      counts: result.counts,
+      page: result.page,
+      limit: result.limit,
+      total: result.total,
     };
   }
 
@@ -62,7 +78,8 @@ export class TournamentsController {
     }
 
     const tournament = await this.tournamentsService.getTournamentById(id, currentUserId);
-    return toTournamentResponse(tournament, currentUserId);
+    // includeRoom = false: room credentials are NEVER returned on this public endpoint
+    return toTournamentResponse(tournament, currentUserId, false);
   }
 
   @Post(':id/register')
@@ -104,10 +121,32 @@ export class TournamentsController {
     return items.map(toTournamentRegistrationResponse);
   }
 
+  /**
+   * Teams tab — read-only list of registered teams in a tournament.
+   * Returns the same data as /participants but shaped as team objects
+   * (one row per team, not per registration).
+   */
+  @Public()
+  @Get(':id/teams')
+  async getTeams(@Param('id') id: string) {
+    return this.tournamentsService.getTeamsForTournament(id);
+  }
+
+  /**
+   * Leaderboard — polled every 20 s by the Flutter app while the tournament
+   * is LIVE. Cache-Control is set to max-age=10 s to allow CDN/proxy caching.
+   * Optional query: ?round=<round name>
+   */
   @Public()
   @Get(':id/leaderboard')
-  async getLeaderboard(@Param('id') id: string): Promise<LeaderboardEntry[]> {
-    return this.matchesService.getLeaderboard(id);
+  async getLeaderboard(
+    @Param('id') id: string,
+    @Query('round') round: string | undefined,
+    @Res() res: Response,
+  ) {
+    const leaderboard = await this.matchesService.getLeaderboard(id, round);
+    res.setHeader('Cache-Control', 'public, max-age=10, stale-while-revalidate=5');
+    res.json({ status: 'success', data: leaderboard });
   }
 
   @Public()
@@ -148,4 +187,3 @@ export class TournamentsController {
     return this.tournamentsService.previewTeamByCode(id, code, user.sub);
   }
 }
-

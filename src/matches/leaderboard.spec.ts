@@ -5,9 +5,9 @@ describe('Leaderboard Tie-Breakers', () => {
     const copy = [...entries];
     copy.sort((a, b) => {
       if (b.total_points !== a.total_points) return b.total_points - a.total_points;
-      if (b.booyahs !== a.booyahs) return b.booyahs - a.booyahs;
-      if (b.total_kills !== a.total_kills) return b.total_kills - a.total_kills;
-      return a.last_match_placement - b.last_match_placement;
+      if ((b.booyahs ?? 0) !== (a.booyahs ?? 0)) return (b.booyahs ?? 0) - (a.booyahs ?? 0);
+      if ((b.total_kills ?? 0) !== (a.total_kills ?? 0)) return (b.total_kills ?? 0) - (a.total_kills ?? 0);
+      return (a.last_match_placement ?? 999) - (b.last_match_placement ?? 999);
     });
 
     return copy.map((item, index) => ({ rank: index + 1, ...item }));

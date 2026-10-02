@@ -168,6 +168,16 @@ model Tournament {
   registrationClosesAt DateTime         @map("registration_closes_at")
   startsAt             DateTime         @map("starts_at")
   status               TournamentStatus @default(DRAFT)
+  streamUrl            String?          @map("stream_url")
+  viewersCount         Int              @default(0) @map("viewers_count")
+  organizerName        String?          @map("organizer_name")
+  organizerVerified    Boolean          @default(false) @map("organizer_verified")
+  accentColorHex       String?          @map("accent_color_hex")
+  perKillReward        Int              @default(0) @map("per_kill_reward")
+  booyahBonus          Int              @default(0) @map("booyah_bonus")
+  pointsSystem         Json?            @map("points_system")
+  schedule             Json?
+  announcements        Json?
   roomId               String?          @map("room_id")
   roomPassword         String?          @map("room_password")
   roomReleasedAt       DateTime?        @map("room_released_at")
@@ -205,13 +215,18 @@ model TournamentRegistration {
 }
 
 model Match {
-  id           String      @id @default(cuid())
-  tournamentId String      @map("tournament_id")
-  matchNumber  Int         @map("match_number")
-  map          String
-  status       MatchStatus @default(SCHEDULED)
-  scheduledAt  DateTime    @map("scheduled_at")
-  createdAt    DateTime    @default(now()) @map("created_at")
+  id              String      @id @default(cuid())
+  tournamentId    String      @map("tournament_id")
+  matchNumber     Int         @map("match_number")
+  round           String      @default("Round 1") @map("round")
+  map             String
+  status          MatchStatus @default(SCHEDULED)
+  scheduledAt     DateTime    @map("scheduled_at")
+  endedAt         DateTime?   @map("ended_at")
+  streamUrl       String?     @map("stream_url")
+  winnerTeamName  String?     @map("winner_team_name")
+  topKillerName   String?     @map("top_killer_name")
+  createdAt       DateTime    @default(now()) @map("created_at")
 
   tournament Tournament    @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   results    MatchResult[]

@@ -58,6 +58,11 @@ export class TournamentsService {
       throw new BadRequestException('registration_closes_at must be before starts_at');
     }
 
+    const streamUrl = dto.stream_url || dto.streamUrl || null;
+    const viewersCount = dto.viewers_count ?? dto.viewersCount ?? 0;
+    const organizerName = dto.organizer_name || dto.organizer || null;
+    const organizerVerified = dto.organizer_verified ?? dto.organizerVerified ?? false;
+
     return this.prisma.tournament.create({
       data: {
         gameId: game.id,
@@ -76,6 +81,16 @@ export class TournamentsService {
         registrationClosesAt: regClose,
         startsAt,
         status: TournamentStatus.DRAFT,
+        streamUrl,
+        viewersCount,
+        organizerName,
+        organizerVerified,
+        accentColorHex: dto.accent_color_hex || null,
+        perKillReward: dto.per_kill_reward || 0,
+        booyahBonus: dto.booyah_bonus || 0,
+        pointsSystem: dto.points_system || null,
+        schedule: dto.schedule || null,
+        announcements: dto.announcements || null,
         createdBy: adminId,
       },
     });
@@ -99,6 +114,16 @@ export class TournamentsService {
     if (dto.registration_opens_at) data.registrationOpensAt = new Date(dto.registration_opens_at);
     if (dto.registration_closes_at) data.registrationClosesAt = new Date(dto.registration_closes_at);
     if (dto.starts_at) data.startsAt = new Date(dto.starts_at);
+    if (dto.stream_url !== undefined || dto.streamUrl !== undefined) data.streamUrl = dto.stream_url || dto.streamUrl || null;
+    if (dto.viewers_count !== undefined || dto.viewersCount !== undefined) data.viewersCount = dto.viewers_count ?? dto.viewersCount;
+    if (dto.organizer_name !== undefined || dto.organizer !== undefined) data.organizerName = dto.organizer_name || dto.organizer;
+    if (dto.organizer_verified !== undefined || dto.organizerVerified !== undefined) data.organizerVerified = dto.organizer_verified ?? dto.organizerVerified;
+    if (dto.accent_color_hex !== undefined) data.accentColorHex = dto.accent_color_hex;
+    if (dto.per_kill_reward !== undefined) data.perKillReward = dto.per_kill_reward;
+    if (dto.booyah_bonus !== undefined) data.booyahBonus = dto.booyah_bonus;
+    if (dto.points_system !== undefined) data.pointsSystem = dto.points_system;
+    if (dto.schedule !== undefined) data.schedule = dto.schedule;
+    if (dto.announcements !== undefined) data.announcements = dto.announcements;
 
     return this.prisma.tournament.update({
       where: { id: tournamentId },
@@ -165,13 +190,57 @@ export class TournamentsService {
     });
   }
 
-  async getTournaments(dto: FilterTournamentQueryDto): Promise<PaginatedResult<Tournament & { game: { slug: string } }>> {
-    const where: any = {};
+  /**
+   * Public statuses that may appear in the listing.
+   * DRAFT and CANCELLED are never shown to regular users.
+   */
+  private static readonly PUBLIC_STATUSES: TournamentStatus[] = [
+    TournamentStatus.UPCOMING,
+    TournamentStatus.REGISTRATION_OPEN,
+    TournamentStatus.REGISTRATION_CLOSED,
+    TournamentStatus.LIVE,
+    TournamentStatus.COMPLETED,
+  ];
 
-    if (dto.status) where.status = dto.status;
+  /**
+   * When the Flutter app sends status=UPCOMING it means "all pre-game
+   * tournaments" — i.e., UPCOMING + REGISTRATION_OPEN + REGISTRATION_CLOSED.
+   */
+  private static readonly UPCOMING_STATUSES: TournamentStatus[] = [
+    TournamentStatus.UPCOMING,
+    TournamentStatus.REGISTRATION_OPEN,
+    TournamentStatus.REGISTRATION_CLOSED,
+  ];
+
+  async getTournaments(
+    dto: FilterTournamentQueryDto,
+  ): Promise<PaginatedResult<Tournament & { game: { slug: string } }> & { counts: { live: number; upcoming: number; completed: number } }> {
+    const where: any = {
+      // Always exclude DRAFT and CANCELLED from the public list
+      status: { in: TournamentsService.PUBLIC_STATUSES },
+    };
+
+    // Status filter — expand UPCOMING to its three constituent statuses
+    if (dto.status) {
+      const s = dto.status.toUpperCase();
+      if (s === 'UPCOMING') {
+        where.status = { in: TournamentsService.UPCOMING_STATUSES };
+      } else if (s === 'LIVE') {
+        where.status = TournamentStatus.LIVE;
+      } else if (s === 'COMPLETED') {
+        where.status = TournamentStatus.COMPLETED;
+      } else {
+        // Unknown status — keep the public filter (don't return an error;
+        // the app may send other values in future).
+        where.status = { in: TournamentsService.PUBLIC_STATUSES };
+      }
+    }
+
     if (dto.team_mode) where.teamMode = dto.team_mode;
     if (dto.format) where.format = dto.format;
     if (dto.map) where.map = { contains: dto.map, mode: 'insensitive' };
+
+    // Game filter
     if (dto.game || dto.game_slug) {
       const g = (dto.game_slug || dto.game)!.trim();
       where.game = {
@@ -182,13 +251,29 @@ export class TournamentsService {
         ],
       };
     }
+
+    // Full-text search (title + organizer name)
+    if (dto.q && dto.q.trim()) {
+      const term = dto.q.trim();
+      where.OR = [
+        { title: { contains: term, mode: 'insensitive' } },
+        { organizerName: { contains: term, mode: 'insensitive' } },
+        { map: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+
     if (dto.date_from || dto.date_to) {
       where.startsAt = {};
       if (dto.date_from) where.startsAt.gte = new Date(dto.date_from);
       if (dto.date_to) where.startsAt.lte = new Date(dto.date_to);
     }
 
-    const [items, total] = await Promise.all([
+    // Counts query: game filter only (independent of status/q so chip badges
+    // show totals for the full game, not just the current filtered subset).
+    const countsWhere: any = { status: { in: TournamentsService.PUBLIC_STATUSES } };
+    if (where.game) countsWhere.game = where.game;
+
+    const [items, total, liveCount, upcomingCount, completedCount] = await Promise.all([
       this.prisma.tournament.findMany({
         where,
         include: { game: { select: { slug: true } } },
@@ -197,10 +282,21 @@ export class TournamentsService {
         take: dto.take,
       }),
       this.prisma.tournament.count({ where }),
+      this.prisma.tournament.count({ where: { ...countsWhere, status: TournamentStatus.LIVE } }),
+      this.prisma.tournament.count({ where: { ...countsWhere, status: { in: TournamentsService.UPCOMING_STATUSES } } }),
+      this.prisma.tournament.count({ where: { ...countsWhere, status: TournamentStatus.COMPLETED } }),
     ]);
 
-    return createPaginatedResponse(items, dto.page || 1, dto.limit || 20, total);
+    return {
+      ...createPaginatedResponse(items, dto.page || 1, dto.limit || 20, total),
+      counts: {
+        live: liveCount,
+        upcoming: upcomingCount,
+        completed: completedCount,
+      },
+    };
   }
+
 
   async getTournamentById(tournamentId: string, currentUserId?: string): Promise<Tournament & { game: { slug: string }; registrations?: TournamentRegistration[] }> {
     const tournament = await this.prisma.tournament.findUnique({
@@ -508,6 +604,54 @@ export class TournamentsService {
       orderBy: { slotNumber: 'asc' },
     });
   }
+
+  /**
+   * Returns a read-only list of teams registered in the tournament.
+   * Used by the Teams tab in the Live section.
+   * Solo registrations (teamId = null) are excluded.
+   */
+  async getTeamsForTournament(tournamentId: string) {
+    await this.getTournamentEntity(tournamentId);
+
+    const registrations = await this.prisma.tournamentRegistration.findMany({
+      where: {
+        tournamentId,
+        status: RegistrationStatus.CONFIRMED,
+        teamId: { not: null },
+      },
+      include: {
+        team: {
+          include: {
+            captain: { select: { id: true, name: true } },
+            members: true,
+          },
+        },
+      },
+      orderBy: { slotNumber: 'asc' },
+    });
+
+    return registrations
+      .filter((r) => r.team !== null)
+      .map((r) => {
+        const team = r.team!;
+        let status: 'active' | 'eliminated' | 'qualified' = 'active';
+        if (r.finalRank !== null && r.finalRank !== undefined) {
+          status = r.finalRank === 1 ? 'qualified' : 'eliminated';
+        }
+        return {
+          id: team.id,
+          name: team.name,
+          tag: team.tag,
+          logo_url: team.logoUrl ?? null,
+          captain_name: team.captain?.name ?? null,
+          players_count: team.members.length,
+          slot_number: r.slotNumber,
+          final_rank: r.finalRank ?? null,
+          status,
+        };
+      });
+  }
+
 
   private async getTournamentEntity(tournamentId: string): Promise<Tournament> {
     const tournament = await this.prisma.tournament.findUnique({

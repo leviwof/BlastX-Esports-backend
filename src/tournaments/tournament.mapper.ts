@@ -25,26 +25,57 @@ export interface TournamentResponse {
   id: string;
   game_id: string;
   game_slug?: string;
+  game?: string;
+  gameLogoUrl?: string | null;
   title: string;
+  name?: string;
   description: string | null;
   banner_url: string | null;
+  bannerImageUrl?: string | null;
   format: string;
+  matchType?: string;
   team_mode: string;
+  mode?: string;
   map: string;
+  mapName?: string;
   max_slots: number;
+  maxSlots?: number;
   registered_count: number;
+  registeredCount?: number;
   slots_left: number;
+  slotsLeft?: number;
   entry_fee: number;
+  entryFee?: number;
   prize_pool: number;
+  prizePool?: number;
+  currency?: string;
   prize_distribution: any;
   rules: any;
   registration_opens_at: Date;
   registration_closes_at: Date;
   starts_at: Date;
+  startsAt?: Date;
   status: string;
-  room_id?: string | null;
-  room_password?: string | null;
-  room_released_at?: Date | null;
+  /** YouTube / streaming URL for "Watch Live". Null when no stream is set. */
+  stream_url: string | null;
+  streamUrl?: string | null;
+  viewers_count: number;
+  viewersCount?: number;
+  organizer: string | null;
+  organizer_verified: boolean;
+  organizerVerified?: boolean;
+  tournamentCode?: string;
+  accent_color_hex: string | null;
+  accentColorHex?: string | null;
+  per_kill_reward: number;
+  perKillReward?: number;
+  booyah_bonus: number;
+  booyahBonus?: number;
+  points_system: any;
+  pointsSystem?: any;
+  schedule: any;
+  announcements: any;
+  // room_id and room_password are intentionally excluded from the public response
   created_by: string;
   created_at: Date;
   updated_at: Date;
@@ -96,8 +127,13 @@ export const toTournamentRegistrationResponse = (
 });
 
 export const toTournamentResponse = (
-  t: Tournament & { game?: { slug: string }; registrations?: TournamentRegistration[] },
+  t: Tournament & { game?: { slug: string; name?: string }; registrations?: TournamentRegistration[] },
   currentUserId?: string,
+  /**
+   * includeRoom is only set to true on the admin endpoint and the
+   * authenticated GET /tournaments/:id/room endpoint.
+   * The public tournament list and detail endpoints NEVER include room creds.
+   */
   includeRoom: boolean = false,
 ): TournamentResponse => {
   const slotsLeft = Math.max(0, t.maxSlots - t.registeredCount);
@@ -113,37 +149,81 @@ export const toTournamentResponse = (
     }
   }
 
-  return {
+  const stream = (t as any).streamUrl ?? null;
+  const viewers = (t as any).viewersCount ?? 0;
+  const orgName = (t as any).organizerName || 'BlastX Esports';
+  const orgVerified = (t as any).organizerVerified ?? true;
+  const accentColor = (t as any).accentColorHex ?? null;
+  const perKill = (t as any).perKillReward ?? 0;
+  const booyah = (t as any).booyahBonus ?? 0;
+  const points = (t as any).pointsSystem ?? null;
+
+  const base: TournamentResponse = {
     id: t.id,
     game_id: t.gameId,
     ...(t.game?.slug ? { game_slug: t.game.slug } : {}),
+    game: t.game?.name || 'Free Fire',
+    gameLogoUrl: null,
     title: t.title,
+    name: t.title,
     description: t.description,
     banner_url: t.bannerUrl,
+    bannerImageUrl: t.bannerUrl,
     format: t.format,
+    matchType: t.format,
     team_mode: t.teamMode,
+    mode: t.teamMode,
     map: t.map,
+    mapName: t.map,
     max_slots: t.maxSlots,
+    maxSlots: t.maxSlots,
     registered_count: t.registeredCount,
+    registeredCount: t.registeredCount,
     slots_left: slotsLeft,
+    slotsLeft,
     entry_fee: t.entryFee,
+    entryFee: t.entryFee,
     prize_pool: t.prizePool,
+    prizePool: t.prizePool,
+    currency: '₹',
     prize_distribution: t.prizeDistribution,
     rules: t.rules,
     registration_opens_at: t.registrationOpensAt,
     registration_closes_at: t.registrationClosesAt,
     starts_at: t.startsAt,
+    startsAt: t.startsAt,
     status: t.status,
-    ...(includeRoom
-      ? {
-          room_id: t.roomId,
-          room_password: t.roomPassword,
-          room_released_at: t.roomReleasedAt,
-        }
-      : {}),
+    stream_url: stream,
+    streamUrl: stream,
+    viewers_count: viewers,
+    viewersCount: viewers,
+    organizer: orgName,
+    organizer_verified: orgVerified,
+    organizerVerified: orgVerified,
+    tournamentCode: t.id,
+    accent_color_hex: accentColor,
+    accentColorHex: accentColor,
+    per_kill_reward: perKill,
+    perKillReward: perKill,
+    booyah_bonus: booyah,
+    booyahBonus: booyah,
+    points_system: points,
+    pointsSystem: points,
+    schedule: (t as any).schedule ?? null,
+    announcements: (t as any).announcements ?? null,
     created_by: t.createdBy,
     created_at: t.createdAt,
     updated_at: t.updatedAt,
     ...(currentUserId !== undefined ? { is_registered: isRegistered, my_registration: myRegistration } : {}),
   };
+
+  // Room credentials are only surfaced on the admin path or the dedicated /room endpoint.
+  // They must NEVER appear in the public tournament list or detail response.
+  if (includeRoom) {
+    (base as any).room_id = t.roomId;
+    (base as any).room_password = t.roomPassword;
+    (base as any).room_released_at = t.roomReleasedAt;
+  }
+
+  return base;
 };

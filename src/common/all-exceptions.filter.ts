@@ -65,6 +65,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     };
 
     if (errorCode) {
+      responseBody.code = errorCode;
       responseBody.error = {
         code: errorCode,
         message,

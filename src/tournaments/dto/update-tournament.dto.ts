@@ -63,4 +63,61 @@ export class UpdateTournamentDto {
   @IsOptional()
   @IsDateString()
   starts_at?: string;
+
+  @IsOptional()
+  @IsString()
+  stream_url?: string;
+
+  @IsOptional()
+  @IsString()
+  streamUrl?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  viewers_count?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  viewersCount?: number;
+
+  @IsOptional()
+  @IsString()
+  organizer_name?: string;
+
+  @IsOptional()
+  @IsString()
+  organizer?: string;
+
+  @IsOptional()
+  organizer_verified?: boolean;
+
+  @IsOptional()
+  organizerVerified?: boolean;
+
+  @IsOptional()
+  @IsString()
+  accent_color_hex?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  per_kill_reward?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  booyah_bonus?: number;
+
+  @IsOptional()
+  points_system?: any;
+
+  @IsOptional()
+  schedule?: any;
+
+  @IsOptional()
+  announcements?: any;
 }

@@ -1,14 +1,21 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Param, Res } from '@nestjs/common';
 import { MatchesService } from './matches.service';
-import { toMatchResponse, MatchResponse } from './match.mapper';
+import { toMatchResponse } from './match.mapper';
+import { Public } from '../common/public.decorator';
+import { Response } from 'express';
 
 @Controller('tournaments')
 export class MatchesController {
   constructor(private readonly matchesService: MatchesService) {}
 
+  @Public()
   @Get(':id/matches')
-  async getMatches(@Param('id') tournamentId: string): Promise<MatchResponse[]> {
+  async getMatches(@Param('id') tournamentId: string, @Res() res: Response) {
     const matches = await this.matchesService.getMatchesForTournament(tournamentId);
-    return matches.map(toMatchResponse);
+    res.setHeader('Cache-Control', 'public, max-age=10, stale-while-revalidate=5');
+    res.json({
+      status: 'success',
+      data: matches.map(toMatchResponse),
+    });
   }
 }
