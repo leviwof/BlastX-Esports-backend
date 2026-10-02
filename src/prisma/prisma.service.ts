@@ -38,13 +38,21 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       await this.$executeRawUnsafe(
         'ALTER TABLE "teams" ADD COLUMN IF NOT EXISTS "accepting_substitutes" BOOLEAN NOT NULL DEFAULT true;',
       ).catch(() => {});
+      // Keep a newly deployed Prisma client compatible with databases where the
+      // tracked migration has not yet been run. These must be separate calls:
+      // PostgreSQL's prepared-statement protocol rejects multiple commands in
+      // one raw query, which previously hid this repair behind the catch below.
       await this.$executeRawUnsafe(`
         DO $$ BEGIN
           CREATE TYPE "TournamentSection" AS ENUM ('FREEFIRE_LIVE', 'BLASTX');
         EXCEPTION
           WHEN duplicate_object THEN NULL;
         END $$;
-        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "section" "TournamentSection" NOT NULL DEFAULT 'BLASTX';
+      `);
+      await this.$executeRawUnsafe(
+        'ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "section" "TournamentSection" NOT NULL DEFAULT \'BLASTX\';',
+      );
+      await this.$executeRawUnsafe(`
         ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "stream_url" TEXT;
         ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "viewers_count" INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "organizer_name" TEXT;
