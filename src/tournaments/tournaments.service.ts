@@ -11,6 +11,7 @@ import {
   TournamentStatus,
   TeamMode,
   TournamentFormat,
+  TournamentSection,
   RegistrationStatus,
   Tournament,
   TournamentRegistration,
@@ -81,6 +82,7 @@ export class TournamentsService {
         registrationClosesAt: regClose,
         startsAt,
         status: TournamentStatus.DRAFT,
+        section: dto.section ?? TournamentSection.BLASTX,
         streamUrl,
         viewersCount,
         organizerName,
@@ -124,6 +126,7 @@ export class TournamentsService {
     if (dto.points_system !== undefined) data.pointsSystem = dto.points_system;
     if (dto.schedule !== undefined) data.schedule = dto.schedule;
     if (dto.announcements !== undefined) data.announcements = dto.announcements;
+    if (dto.section !== undefined) data.section = dto.section;
 
     return this.prisma.tournament.update({
       where: { id: tournamentId },
@@ -237,6 +240,7 @@ export class TournamentsService {
     }
 
     if (dto.team_mode) where.teamMode = dto.team_mode;
+    if (dto.section) where.section = dto.section;
     if (dto.format) where.format = dto.format;
     if (dto.map) where.map = { contains: dto.map, mode: 'insensitive' };
 
@@ -272,6 +276,7 @@ export class TournamentsService {
     // show totals for the full game, not just the current filtered subset).
     const countsWhere: any = { status: { in: TournamentsService.PUBLIC_STATUSES } };
     if (where.game) countsWhere.game = where.game;
+    if (dto.section) countsWhere.section = dto.section;
 
     const [items, total, liveCount, upcomingCount, completedCount] = await Promise.all([
       this.prisma.tournament.findMany({

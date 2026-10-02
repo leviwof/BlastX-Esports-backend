@@ -39,6 +39,11 @@ enum TournamentStatus {
   CANCELLED
 }
 
+enum TournamentSection {
+  FREEFIRE_LIVE
+  BLASTX
+}
+
 enum RegistrationStatus {
   CONFIRMED
   CANCELLED
@@ -168,6 +173,7 @@ model Tournament {
   registrationClosesAt DateTime         @map("registration_closes_at")
   startsAt             DateTime         @map("starts_at")
   status               TournamentStatus @default(DRAFT)
+  section              TournamentSection @default(BLASTX)
   streamUrl            String?          @map("stream_url")
   viewersCount         Int              @default(0) @map("viewers_count")
   organizerName        String?          @map("organizer_name")
@@ -191,6 +197,7 @@ model Tournament {
   matches       Match[]
 
   @@index([gameId, status, startsAt])
+  @@index([section, status, startsAt])
   @@map("tournaments")
 }
 

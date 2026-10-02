@@ -56,6 +56,7 @@ export interface TournamentResponse {
   starts_at: Date;
   startsAt?: Date;
   status: string;
+  section: string;
   /** YouTube / streaming URL for "Watch Live". Null when no stream is set. */
   stream_url: string | null;
   streamUrl?: string | null;
@@ -193,6 +194,7 @@ export const toTournamentResponse = (
     starts_at: t.startsAt,
     startsAt: t.startsAt,
     status: t.status,
+    section: (t as any).section,
     stream_url: stream,
     streamUrl: stream,
     viewers_count: viewers,

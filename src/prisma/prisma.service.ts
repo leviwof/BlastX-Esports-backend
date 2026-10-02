@@ -39,6 +39,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         'ALTER TABLE "teams" ADD COLUMN IF NOT EXISTS "accepting_substitutes" BOOLEAN NOT NULL DEFAULT true;',
       ).catch(() => {});
       await this.$executeRawUnsafe(`
+        DO $$ BEGIN
+          CREATE TYPE "TournamentSection" AS ENUM ('FREEFIRE_LIVE', 'BLASTX');
+        EXCEPTION
+          WHEN duplicate_object THEN NULL;
+        END $$;
+        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "section" "TournamentSection" NOT NULL DEFAULT 'BLASTX';
         ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "stream_url" TEXT;
         ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "viewers_count" INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "organizer_name" TEXT;

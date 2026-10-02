@@ -1,5 +1,5 @@
-import { IsOptional, IsString, IsDateString } from 'class-validator';
-import { TournamentStatus, TeamMode, TournamentFormat } from '@prisma/client';
+import { IsOptional, IsString, IsDateString, IsEnum } from 'class-validator';
+import { TeamMode, TournamentFormat, TournamentSection } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/pagination.dto';
 import { Transform } from 'class-transformer';
 
@@ -11,6 +11,11 @@ import { Transform } from 'class-transformer';
  * by accepting the raw string and expanding it in TournamentsService.
  */
 export class FilterTournamentQueryDto extends PaginationQueryDto {
+  @IsOptional()
+  @IsEnum(TournamentSection)
+  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
+  section?: TournamentSection;
+
   @IsOptional()
   @IsString()
   game?: string;

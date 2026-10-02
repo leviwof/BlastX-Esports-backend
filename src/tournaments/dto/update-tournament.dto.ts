@@ -1,8 +1,12 @@
 import { IsOptional, IsString, IsEnum, IsInt, Min, IsUrl, IsDateString } from 'class-validator';
-import { TournamentFormat, TeamMode } from '@prisma/client';
+import { TournamentFormat, TeamMode, TournamentSection } from '@prisma/client';
 import { Type } from 'class-transformer';
 
 export class UpdateTournamentDto {
+  @IsOptional()
+  @IsEnum(TournamentSection)
+  section?: TournamentSection;
+
   @IsOptional()
   @IsString()
   title?: string;
