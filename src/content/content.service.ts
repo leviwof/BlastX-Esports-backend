@@ -97,7 +97,10 @@ export class ContentService {
       };
     }
 
-    if (process.env.NODE_ENV === 'production') {
+    const isHostedDeployment =
+      process.env.NODE_ENV === 'production' ||
+      Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+    if (isHostedDeployment) {
       if (googleDriveConfigured) {
         throw new BadGatewayException('Image storage is unavailable. Please try again later.');
       }

@@ -5,11 +5,14 @@ describe('ContentService image uploads', () => {
   let service: ContentService;
   const originalSupabaseUrl = process.env.SUPABASE_URL;
   const originalSupabaseKey = process.env.SUPABASE_SECRET_KEY;
+  const originalSupabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY;
   const originalGoogleRefreshToken = process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
   const originalGoogleClientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
   const originalGoogleClientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
   const originalGoogleFolderId = process.env.GOOGLE_DRIVE_IMAGES_FOLDER_ID;
   const originalNodeEnv = process.env.NODE_ENV;
+  const originalRailwayEnvironment = process.env.RAILWAY_ENVIRONMENT;
+  const originalRailwayProjectId = process.env.RAILWAY_PROJECT_ID;
 
   beforeEach(() => {
     service = new ContentService({} as never);
@@ -19,6 +22,8 @@ describe('ContentService image uploads', () => {
     delete process.env.GOOGLE_DRIVE_CLIENT_ID;
     delete process.env.GOOGLE_DRIVE_CLIENT_SECRET;
     delete process.env.GOOGLE_DRIVE_IMAGES_FOLDER_ID;
+    delete process.env.RAILWAY_ENVIRONMENT;
+    delete process.env.RAILWAY_PROJECT_ID;
     process.env.NODE_ENV = 'test';
   });
 
@@ -28,6 +33,8 @@ describe('ContentService image uploads', () => {
     else process.env.SUPABASE_URL = originalSupabaseUrl;
     if (originalSupabaseKey === undefined) delete process.env.SUPABASE_SECRET_KEY;
     else process.env.SUPABASE_SECRET_KEY = originalSupabaseKey;
+    if (originalSupabasePublishableKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY;
+    else process.env.SUPABASE_PUBLISHABLE_KEY = originalSupabasePublishableKey;
     if (originalGoogleRefreshToken === undefined) delete process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
     else process.env.GOOGLE_DRIVE_REFRESH_TOKEN = originalGoogleRefreshToken;
     if (originalGoogleClientId === undefined) delete process.env.GOOGLE_DRIVE_CLIENT_ID;
@@ -38,6 +45,10 @@ describe('ContentService image uploads', () => {
     else process.env.GOOGLE_DRIVE_IMAGES_FOLDER_ID = originalGoogleFolderId;
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = originalNodeEnv;
+    if (originalRailwayEnvironment === undefined) delete process.env.RAILWAY_ENVIRONMENT;
+    else process.env.RAILWAY_ENVIRONMENT = originalRailwayEnvironment;
+    if (originalRailwayProjectId === undefined) delete process.env.RAILWAY_PROJECT_ID;
+    else process.env.RAILWAY_PROJECT_ID = originalRailwayProjectId;
   });
 
   it('stores supported images in the public storage bucket and returns the URL', async () => {
@@ -108,6 +119,25 @@ describe('ContentService image uploads', () => {
         buffer: Buffer.alloc(0),
       }),
     ).rejects.toThrow('Image must be 8 MB or smaller');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back to local disk on Railway when remote storage is unconfigured', async () => {
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_SECRET_KEY;
+    delete process.env.SUPABASE_PUBLISHABLE_KEY;
+    process.env.NODE_ENV = 'development';
+    process.env.RAILWAY_ENVIRONMENT = 'production';
+    const fetchMock = jest.spyOn(global, 'fetch');
+    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+    await expect(
+      service.uploadImage({
+        mimetype: 'image/png',
+        size: pngHeader.length,
+        buffer: pngHeader,
+      }),
+    ).rejects.toThrow('Image storage is not configured');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
