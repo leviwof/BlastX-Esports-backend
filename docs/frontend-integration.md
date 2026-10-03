@@ -139,7 +139,7 @@ Emails are normalised server-side (`trim` + lowercase), so send them as typed.
 | `POST` | `/v1/teams/:teamId/join` | Join a team (`{ invite_code?, rosterType?: "MAIN" | "SUBSTITUTE", player?: { ign, uid } }`); a full main roster can fall back to substitute if accepted |
 | `POST` | `/v1/tournaments/:id/register` | Captain registers with `{ team_id }`; registration is accepted only when tournament status is `LIVE`. SQUAD requires exactly 4 MAIN players (substitute excluded); failure uses code `INVALID_MEMBER_COUNT`. Roster is locked after registration. Paid entry remains gated until wallet debit support is available. Response includes `success`, `message`, and `data` with `registration_id`, `tournament_id`, `team_id`, `registered_at`; root `status` remains the registration state (`CONFIRMED`) for compatibility. |
 | `DELETE` | `/v1/tournaments/:id/register` | Leave a tournament |
-| `GET` | `/v1/tournaments/:id/room` | Requires authentication and confirmed tournament registration. Returns **403** with `NOT_REGISTERED` if not registered, or **425** with `ROOM_NOT_AVAILABLE` and `reveal_at` until room release. On success, `data` includes `room_id`, `password`, `starts_at`, and `status: "READY"` (legacy `room_password` is also present). |
+| `GET` | `/v1/tournaments/:id/room` | Requires authentication and confirmed tournament registration. Returns **403** with `NOT_REGISTERED` if not registered, or **425** with `ROOM_NOT_AVAILABLE` and `reveal_at` until room release. On success, `data` includes `room_id`, `password`, `starts_at`, and `status: "READY"` (legacy `room_password` is also present). Admin publishing with `release_now: true` makes it available immediately. |
 | `POST` | `/v1/teams` | `{ name, tag, game_slug?, logo_url?, accepting_substitutes? }` — `tag` = 2–5 alphanumeric |
 | `GET` | `/v1/teams/me` | My teams |
 | `GET` | `/v1/teams/:id` | Team detail incl. members |
@@ -156,7 +156,7 @@ Emails are normalised server-side (`trim` + lowercase), so send them as typed.
 ### Admin (role `ADMIN`)
 
 `POST /v1/admin/tournaments`, `PATCH /v1/admin/tournaments/:id`,
-`POST /v1/admin/tournaments/:id/status`, `POST /v1/admin/tournaments/:id/room` (or `/room-details`, body `{ room_id, password }`; response includes `success: true` and a message while preserving the tournament `status`),
+`POST /v1/admin/tournaments/:id/status`, `POST /v1/admin/tournaments/:id/room` (or `/room-details`, body `{ room_id, room_password, release_now: true }`; response includes `success: true` and a message while preserving the tournament `status`). The authenticated `GET /v1/admin/tournaments` list includes room credentials for the admin manage cards; public tournament catalogue/detail APIs never expose them.
 `POST /v1/admin/tournaments/:id/disqualify`, `POST /v1/admin/tournaments/:id/matches`,
 `POST /v1/admin/matches/:matchId/results`, `POST /v1/admin/tournaments/:id/finalize`.
 

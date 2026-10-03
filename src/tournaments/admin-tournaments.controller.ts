@@ -25,7 +25,7 @@ export class AdminTournamentsController {
     const result = await this.tournamentsService.getTournaments(query, undefined, true);
     return {
       ...result,
-      items: result.items.map((item) => toTournamentResponse(item)),
+      items: result.items.map((item) => toTournamentResponse(item, undefined, true)),
     };
   }
 
