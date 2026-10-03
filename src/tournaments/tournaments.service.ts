@@ -155,6 +155,10 @@ export class TournamentsService {
 
   async setRoomCredentials(adminId: string, tournamentId: string, dto: SetRoomCredentialsDto): Promise<Tournament> {
     const tournament = await this.getTournamentEntity(tournamentId);
+    const roomPassword = dto.password ?? dto.room_password;
+    if (!roomPassword) {
+      throw new BadRequestException('A room password is required');
+    }
 
     const roomReleasedAt = dto.release_now ? new Date() : tournament.roomReleasedAt;
 
@@ -162,7 +166,7 @@ export class TournamentsService {
       where: { id: tournamentId },
       data: {
         roomId: dto.room_id,
-        roomPassword: dto.room_password,
+        roomPassword,
         roomReleasedAt,
       },
     });
@@ -172,7 +176,7 @@ export class TournamentsService {
         tournamentId,
         tournamentTitle: tournament.title,
         roomId: dto.room_id,
-        roomPassword: dto.room_password,
+        roomPassword,
       });
     }
 
@@ -370,9 +374,12 @@ export class TournamentsService {
     // Check Paid Tournaments feature flag
     if (tournament.entryFee > 0) {
       const paidEnabled = this.config.get<string>('PAID_TOURNAMENTS_ENABLED') === 'true';
-      if (!paidEnabled) {
-        throw new BadRequestException('Paid tournaments are not enabled yet');
-      }
+      throw new BadRequestException({
+        code: 'PAID_TOURNAMENTS_UNAVAILABLE',
+        message: paidEnabled
+          ? 'Paid tournaments require wallet support and are not available yet'
+          : 'Paid tournaments are not enabled yet',
+      });
     }
 
     let teamId: string | null = null;
@@ -403,6 +410,9 @@ export class TournamentsService {
       if (!team) {
         throw new NotFoundException('Team not found');
       }
+      if (team.tournamentId && team.tournamentId !== tournamentId) {
+        throw new BadRequestException('This team was created for a different tournament');
+      }
       if (team.gameId !== tournament.gameId) {
         throw new BadRequestException('Team is not configured for this game');
       }
@@ -410,18 +420,21 @@ export class TournamentsService {
         throw new BadRequestException('Only the team captain can register the team for a tournament');
       }
 
-      participantUserIds = team.members.map((m) => m.userId);
+      const mainMembers = team.members.filter((member) => member.role !== TeamMemberRole.SUBSTITUTE);
+      participantUserIds = mainMembers.map((member) => member.userId);
 
       // Roster size validation
       if (tournament.teamMode === TeamMode.DUO) {
-        if (team.members.length < 2) {
+        if (mainMembers.length < 2) {
           throw new BadRequestException('A DUO tournament requires a team with at least 2 players');
         }
       } else if (tournament.teamMode === TeamMode.SQUAD) {
-        if (team.members.length !== 4) {
-          throw new BadRequestException(
-            `A SQUAD tournament requires exactly 4 team members to play. Your team currently has ${team.members.length}; add members before registering.`,
-          );
+        if (mainMembers.length !== 4) {
+          throw new BadRequestException({
+            status: 'error',
+            code: 'INVALID_MEMBER_COUNT',
+            message: 'Tournament registration requires exactly 4 main players in your team.',
+          });
         }
       }
 
@@ -456,11 +469,32 @@ export class TournamentsService {
           throw new BadRequestException('Your team is already registered in this tournament');
         }
         // Check if any player in the registering team is in an already-registered team
-        const registeredUserIds = reg.team ? reg.team.members.map((m) => m.userId) : [reg.userId];
+        const registeredUserIds = reg.team
+          ? reg.team.members
+              .filter((member) => member.role !== TeamMemberRole.SUBSTITUTE)
+              .map((member) => member.userId)
+          : [reg.userId];
         const overlap = participantUserIds.some((uid) => registeredUserIds.includes(uid));
         if (overlap) {
           throw new BadRequestException('One or more of your team members are already registered in another team for this tournament');
         }
+      }
+
+    }
+
+    if (teamId) {
+      const formingTeamConflict = await this.prisma.team.findFirst({
+        where: {
+          tournamentId,
+          id: { not: teamId },
+          members: { some: { userId: { in: participantUserIds } } },
+        },
+        select: { id: true },
+      });
+      if (formingTeamConflict) {
+        throw new BadRequestException(
+          'One or more team members already belong to another team for this tournament',
+        );
       }
     }
 
@@ -568,7 +602,10 @@ export class TournamentsService {
     });
   }
 
-  async getRoomCredentials(userId: string, tournamentId: string): Promise<{ room_id: string; room_password: string; visibleFrom: Date }> {
+  async getRoomCredentials(
+    userId: string,
+    tournamentId: string,
+  ): Promise<{ room_id: string; room_password: string; visibleFrom: Date; starts_at: Date }> {
     const tournament = await this.getTournamentEntity(tournamentId);
 
     // Check if user is registered directly or through a team
@@ -594,9 +631,9 @@ export class TournamentsService {
     }
 
     const now = new Date();
-    const isReleased = tournament.roomReleasedAt && tournament.roomReleasedAt <= now;
+    const revealAt = tournament.roomReleasedAt ?? new Date(tournament.startsAt.getTime() - 15 * 60 * 1000);
+    const isReleased = revealAt <= now;
     if (!isReleased || !tournament.roomId || !tournament.roomPassword) {
-      const revealAt = tournament.roomReleasedAt ?? new Date(tournament.startsAt.getTime() - 15 * 60 * 1000);
       throw new HttpException(
         {
           code: 'ROOM_NOT_AVAILABLE',
@@ -610,7 +647,8 @@ export class TournamentsService {
     return {
       room_id: tournament.roomId,
       room_password: tournament.roomPassword,
-      visibleFrom: tournament.roomReleasedAt!,
+      visibleFrom: revealAt,
+      starts_at: tournament.startsAt,
     };
   }
 
@@ -675,6 +713,41 @@ export class TournamentsService {
       });
   }
 
+  async getRegisteredTeamsForTournament(tournamentId: string) {
+    await this.getTournamentEntity(tournamentId);
+    const registrations = await this.prisma.tournamentRegistration.findMany({
+      where: {
+        tournamentId,
+        status: RegistrationStatus.CONFIRMED,
+        teamId: { not: null },
+      },
+      include: {
+        team: {
+          include: {
+            captain: { select: { name: true } },
+            members: true,
+          },
+        },
+      },
+      orderBy: { slotNumber: 'asc' },
+    });
+
+    return registrations.flatMap((registration) => {
+      if (!registration.team) return [];
+      const mainMembers = registration.team.members.filter(
+        (member) => member.role !== TeamMemberRole.SUBSTITUTE,
+      );
+      return [{
+        id: registration.team.id,
+        name: registration.team.name,
+        tag: registration.team.tag,
+        logo_url: registration.team.logoUrl ?? '',
+        captain_name: registration.team.captain.name,
+        member_count: mainMembers.length,
+        registered_at: registration.createdAt,
+      }];
+    });
+  }
 
   private async getTournamentEntity(tournamentId: string): Promise<Tournament> {
     const tournament = await this.prisma.tournament.findUnique({
@@ -688,6 +761,35 @@ export class TournamentsService {
 
   async getMyTeamForTournament(userId: string, tournamentId: string) {
     await this.getTournamentEntity(tournamentId);
+
+    const formingTeam = await this.prisma.team.findFirst({
+      where: {
+        tournamentId,
+        members: { some: { userId } },
+      },
+      include: {
+        captain: true,
+        members: {
+          include: {
+            user: { include: { gameProfiles: true } },
+          },
+        },
+      },
+    });
+    if (formingTeam) {
+      const registration = await this.prisma.tournamentRegistration.findUnique({
+        where: {
+          unique_tournament_team: { tournamentId, teamId: formingTeam.id },
+        },
+      });
+      return {
+        ...toTeamResponse(formingTeam as any),
+        tournament_id: tournamentId,
+        is_registered: registration?.status === RegistrationStatus.CONFIRMED,
+        slot_number: registration?.slotNumber ?? null,
+        registration_status: registration?.status ?? null,
+      };
+    }
 
     const userMemberships = await this.prisma.teamMember.findMany({
       where: { userId },
@@ -760,6 +862,17 @@ export class TournamentsService {
       throw new BadRequestException(`Team name '${cleanName}' is already taken for this game`);
     }
 
+    const existingTournamentMembership = await this.prisma.teamMember.findFirst({
+      where: {
+        userId,
+        team: { tournamentId },
+      },
+      select: { id: true },
+    });
+    if (existingTournamentMembership) {
+      throw new BadRequestException('You are already a member of a team for this tournament');
+    }
+
     // Must have Game Profile for tournament's game
     let profile = await this.prisma.gameProfile.findUnique({
       where: { unique_user_game: { userId, gameId: tournament.gameId } },
@@ -791,6 +904,7 @@ export class TournamentsService {
     const team = await this.prisma.team.create({
       data: {
         gameId: tournament.gameId,
+        tournamentId,
         name: cleanName,
         tag: cleanTag,
         logoUrl: sanitizedLogoUrl,
@@ -819,6 +933,7 @@ export class TournamentsService {
     return {
       ...toTeamResponse(team as any),
       tournament_id: tournamentId,
+      is_registered: false,
       is_registered_in_tournament: false,
       slot_number: null,
       registration_status: null,
@@ -832,6 +947,7 @@ export class TournamentsService {
       where: {
         inviteCode: { equals: inviteCode, mode: 'insensitive' },
         gameId: tournament.gameId,
+        OR: [{ tournamentId }, { tournamentId: null }],
       },
       include: {
         captain: true,
@@ -863,14 +979,32 @@ export class TournamentsService {
     const maxSub = 1;
 
     const isAlreadyMember = currentUserId ? team.members.some((m) => m.userId === currentUserId) : false;
-    const canJoinMain = mainCount < maxMain && !isAlreadyMember;
-    const canJoinSub = (team.acceptingSubstitutes ?? true) && subCount < maxSub && !isAlreadyMember;
+    const isRegistered = registration?.status === RegistrationStatus.CONFIRMED;
+    const otherTournamentMembership = currentUserId
+      ? await this.prisma.teamMember.findFirst({
+          where: {
+            userId: currentUserId,
+            team: { tournamentId },
+          },
+          select: { teamId: true },
+        })
+      : null;
+    const isOnAnotherTeam =
+      !!otherTournamentMembership && otherTournamentMembership.teamId !== team.id;
+    const canJoinMain = mainCount < maxMain && !isAlreadyMember && !isOnAnotherTeam && !isRegistered;
+    const canJoinSub =
+      (team.acceptingSubstitutes ?? true) &&
+      subCount < maxSub &&
+      !isAlreadyMember &&
+      !isOnAnotherTeam &&
+      !isRegistered;
     const isFull = !canJoinMain && !canJoinSub;
 
     return {
       ...toTeamResponse(team as any),
       tournament_id: tournamentId,
-      is_registered_in_tournament: !!registration,
+      captain_name: team.captain.name,
+      is_registered_in_tournament: isRegistered,
       slot_number: registration?.slotNumber ?? null,
       roster_info: {
         main_players_count: mainCount,
@@ -879,10 +1013,15 @@ export class TournamentsService {
         max_substitutes: maxSub,
         accepting_substitutes: team.acceptingSubstitutes ?? true,
         is_already_member: isAlreadyMember,
+        is_on_another_team: isOnAnotherTeam,
         can_join_main: canJoinMain,
         can_join_substitute: canJoinSub,
         is_full: isFull,
       },
+      main_count: mainCount,
+      max_main: maxMain,
+      is_main_full: mainCount >= maxMain,
+      can_join: !isAlreadyMember && !isFull,
     };
   }
 

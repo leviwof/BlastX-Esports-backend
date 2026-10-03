@@ -120,6 +120,7 @@ Emails are normalised server-side (`trim` + lowercase), so send them as typed.
 | `GET` | `/v1/tournaments` | Filters: `page`, `limit`, `status`, `team_mode`, `format`, `map`, `date_from`, `date_to` |
 | `GET` | `/v1/tournaments/:id` | If you *do* send a valid token, the response also includes `is_registered` / `my_registration` |
 | `GET` | `/v1/tournaments/:id/participants` | Registered list with user/team summary |
+| `GET` | `/v1/tournaments/:id/registered-teams` | `{ status, total, data }` team cards for the registered-team grid |
 | `GET` | `/v1/tournaments/:id/leaderboard` | `[{ rank, ... }]` |
 | `GET` | `/v1/tournaments/:id/matches` | Match list for a tournament |
 
@@ -132,17 +133,18 @@ Emails are normalised server-side (`trim` + lowercase), so send them as typed.
 | `GET` | `/v1/users/me/game-profile?game_slug=free_fire` | In-game identity |
 | `PUT` | `/v1/users/me/game-profile` | `{ game_slug, in_game_uid, in_game_name }` — UID must be **8–12 digits** |
 | `GET` | `/v1/tournaments/me` | My joined tournaments |
-| `GET` | `/v1/tournaments/:id/my-team` | User's registered team for this tournament (or `null`) |
-| `POST` | `/v1/tournaments/:id/teams` | Create new team for tournament (`{ name, tag, logo_url?, accepting_substitutes? }`) and register slot |
-| `GET` | `/v1/tournaments/:id/teams/code/:code` | Search / preview team by invite code before joining (returns roster & slot availability) |
-| `POST` | `/v1/tournaments/:id/register` | `{ team_id? }` — send `{}` for solo; `team_id` for squad modes |
+| `GET` | `/v1/tournaments/:id/my-team` | User's forming or registered team lobby for this tournament (or `null`); includes `is_registered`, `slot_number`, and `registration_status` |
+| `POST` | `/v1/tournaments/:id/teams` | Create a tournament-scoped, forming team (`{ name, tag, logo_url?, accepting_substitutes?, player?: { ign, uid } }`); does **not** register a tournament slot. Returns `{ status: "success", data }` and also includes the team fields at the top level for compatibility. |
+| `GET` | `/v1/tournaments/:id/teams/code/:code` | Search / preview a team by invite code; includes `captain_name`, `main_count`, `max_main`, `is_main_full`, `can_join` and detailed `roster_info` |
+| `POST` | `/v1/teams/:teamId/join` | Join a team (`{ invite_code?, rosterType?: "MAIN" | "SUBSTITUTE", player?: { ign, uid } }`); a full main roster can fall back to substitute if accepted |
+| `POST` | `/v1/tournaments/:id/register` | Captain registers with `{ team_id }`; registration is accepted only when tournament status is `LIVE`. SQUAD requires exactly 4 MAIN players (substitute excluded); failure uses code `INVALID_MEMBER_COUNT`. Roster is locked after registration. Paid entry remains gated until wallet debit support is available. Response includes `success`, `message`, and `data` with `registration_id`, `tournament_id`, `team_id`, `registered_at`; root `status` remains the registration state (`CONFIRMED`) for compatibility. |
 | `DELETE` | `/v1/tournaments/:id/register` | Leave a tournament |
-| `GET` | `/v1/tournaments/:id/room` | Room credentials. Returns **403** `"You must be registered in this tournament…"` if not registered, or **403** `"Room credentials have not been released yet…"` until the release window (`ROOM_RELEASE_MINUTES`, default 15, before `starts_at`) |
+| `GET` | `/v1/tournaments/:id/room` | Requires authentication and confirmed tournament registration. Returns **403** with `NOT_REGISTERED` if not registered, or **425** with `ROOM_NOT_AVAILABLE` and `reveal_at` until room release. On success, `data` includes `room_id`, `password`, `starts_at`, and `status: "READY"` (legacy `room_password` is also present). |
 | `POST` | `/v1/teams` | `{ name, tag, game_slug?, logo_url?, accepting_substitutes? }` — `tag` = 2–5 alphanumeric |
 | `GET` | `/v1/teams/me` | My teams |
 | `GET` | `/v1/teams/:id` | Team detail incl. members |
 | `POST` | `/v1/teams/join` | `{ invite_code }` |
-| `POST` | `/v1/teams/:id/join` | Join specific team (`{ invite_code?, as_substitute? }`) |
+| `POST` | `/v1/teams/:id/join` | Join specific team (`{ invite_code?, rosterType?, as_substitute?, player?: { ign, uid } }`) |
 | `POST` | `/v1/teams/:id/leave` | Leave team (member only; captain must transfer first) |
 | `POST` | `/v1/teams/:id/members/:userId` | Captain removes a member |
 | `DELETE` | `/v1/teams/:id/members/:userId` | Captain removes a member; a member passes their **own** id to leave |
@@ -154,7 +156,7 @@ Emails are normalised server-side (`trim` + lowercase), so send them as typed.
 ### Admin (role `ADMIN`)
 
 `POST /v1/admin/tournaments`, `PATCH /v1/admin/tournaments/:id`,
-`POST /v1/admin/tournaments/:id/status`, `POST /v1/admin/tournaments/:id/room`,
+`POST /v1/admin/tournaments/:id/status`, `POST /v1/admin/tournaments/:id/room` (or `/room-details`, body `{ room_id, password }`; response includes `success: true` and a message while preserving the tournament `status`),
 `POST /v1/admin/tournaments/:id/disqualify`, `POST /v1/admin/tournaments/:id/matches`,
 `POST /v1/admin/matches/:matchId/results`, `POST /v1/admin/tournaments/:id/finalize`.
 

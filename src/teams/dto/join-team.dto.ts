@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { IsBoolean, IsEnum, IsIn, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { TeamMemberRole } from '@prisma/client';
 
@@ -27,6 +27,7 @@ export class JoinTeamDto {
 
   @IsOptional()
   @IsString()
+  @IsIn(['MAIN', 'SUBSTITUTE'])
   rosterType?: string;
 
   @IsOptional()

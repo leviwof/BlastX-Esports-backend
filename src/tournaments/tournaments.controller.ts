@@ -91,7 +91,20 @@ export class TournamentsController {
     @Body() dto: RegisterTournamentDto,
   ): Promise<TournamentRegistrationResponse> {
     const registration = await this.tournamentsService.registerUserOrTeam(user.sub, id, dto);
-    return toTournamentRegistrationResponse(registration);
+    const response = toTournamentRegistrationResponse(registration);
+    return {
+      ...response,
+      success: true,
+      message: registration.teamId
+        ? 'Team successfully registered for tournament'
+        : 'Successfully registered for tournament',
+      data: {
+        registration_id: response.id,
+        tournament_id: response.tournament_id,
+        team_id: response.team_id,
+        registered_at: response.created_at,
+      },
+    };
   }
 
   @Delete(':id/register')
@@ -113,7 +126,17 @@ export class TournamentsController {
     @Param('id') id: string,
   ) {
     const room = await this.tournamentsService.getRoomCredentials(user.sub, id);
-    return { status: 'success', data: room };
+    return {
+      status: 'success',
+      data: {
+        room_id: room.room_id,
+        password: room.room_password,
+        room_password: room.room_password,
+        starts_at: room.starts_at,
+        visible_from: room.visibleFrom,
+        status: 'READY',
+      },
+    };
   }
 
   @Public()
@@ -132,6 +155,13 @@ export class TournamentsController {
   @Get(':id/teams')
   async getTeams(@Param('id') id: string) {
     return this.tournamentsService.getTeamsForTournament(id);
+  }
+
+  @Public()
+  @Get(':id/registered-teams')
+  async getRegisteredTeams(@Param('id') id: string) {
+    const data = await this.tournamentsService.getRegisteredTeamsForTournament(id);
+    return { status: 'success', total: data.length, data };
   }
 
   /**
@@ -176,7 +206,8 @@ export class TournamentsController {
     @Param('id') id: string,
     @Body() dto: CreateTournamentTeamDto,
   ) {
-    return this.tournamentsService.createTournamentTeam(user.sub, id, dto);
+    const team = await this.tournamentsService.createTournamentTeam(user.sub, id, dto);
+    return { status: 'success' as const, data: team, ...team };
   }
 
   @Get(':id/teams/code/:code')

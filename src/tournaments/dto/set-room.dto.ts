@@ -5,9 +5,15 @@ export class SetRoomCredentialsDto {
   @IsString()
   room_id!: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  room_password!: string;
+  @IsNotEmpty()
+  room_password?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  password?: string;
 
   @IsOptional()
   @IsBoolean()

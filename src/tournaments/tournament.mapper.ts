@@ -2,6 +2,8 @@ import { Tournament, TournamentRegistration, Team, User } from '@prisma/client';
 
 export interface TournamentRegistrationResponse {
   id: string;
+  registration_id?: string;
+  success?: boolean;
   tournament_id: string;
   user_id: string;
   team_id: string | null;
@@ -9,6 +11,14 @@ export interface TournamentRegistrationResponse {
   slot_number: number;
   final_rank: number | null;
   created_at: Date;
+  registered_at?: Date;
+  message?: string;
+  data?: {
+    registration_id: string;
+    tournament_id: string;
+    team_id: string | null;
+    registered_at: Date;
+  };
   user?: {
     id: string;
     name: string;
@@ -116,6 +126,7 @@ export const toTournamentRegistrationResponse = (
   reg: TournamentRegistration & { user?: User; team?: Team | null },
 ): TournamentRegistrationResponse => ({
   id: reg.id,
+  registration_id: reg.id,
   tournament_id: reg.tournamentId,
   user_id: reg.userId,
   team_id: reg.teamId,
@@ -123,6 +134,7 @@ export const toTournamentRegistrationResponse = (
   slot_number: reg.slotNumber,
   final_rank: reg.finalRank,
   created_at: reg.createdAt,
+  registered_at: reg.createdAt,
   ...(reg.user ? { user: { id: reg.user.id, name: reg.user.name, email: reg.user.email } } : {}),
   ...(reg.team ? { team: { id: reg.team.id, name: reg.team.name, tag: reg.team.tag } } : { team: null }),
 });

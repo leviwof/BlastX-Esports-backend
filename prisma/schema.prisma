@@ -121,22 +121,25 @@ model GameProfile {
 }
 
 model Team {
-  id         String   @id @default(cuid())
-  gameId     String   @map("game_id")
-  name       String
-  tag        String
-  logoUrl    String?  @map("logo_url")
-  captainId  String   @map("captain_id")
-  inviteCode String   @unique @map("invite_code")
-  acceptingSubstitutes Boolean @default(true) @map("accepting_substitutes")
-  createdAt  DateTime @default(now()) @map("created_at")
+  id                   String   @id @default(cuid())
+  gameId               String   @map("game_id")
+  tournamentId         String?  @map("tournament_id")
+  name                 String
+  tag                  String
+  logoUrl              String?  @map("logo_url")
+  captainId            String   @map("captain_id")
+  inviteCode           String   @unique @map("invite_code")
+  acceptingSubstitutes Boolean  @default(true) @map("accepting_substitutes")
+  createdAt            DateTime @default(now()) @map("created_at")
 
-  game      Game                     @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  captain   User                     @relation("CaptainTeams", fields: [captainId], references: [id], onDelete: Restrict)
-  members   TeamMember[]
+  game          Game                     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  tournament    Tournament?              @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  captain       User                     @relation("CaptainTeams", fields: [captainId], references: [id], onDelete: Restrict)
+  members       TeamMember[]
   registrations TournamentRegistration[]
 
   @@unique([gameId, name], name: "unique_game_team_name")
+  @@index([tournamentId])
   @@map("teams")
 }
 
@@ -193,6 +196,7 @@ model Tournament {
 
   game          Game                     @relation(fields: [gameId], references: [id], onDelete: Restrict)
   creator       User                     @relation("CreatedTournaments", fields: [createdBy], references: [id], onDelete: Restrict)
+  teams         Team[]
   registrations TournamentRegistration[]
   matches       Match[]
 
@@ -361,4 +365,3 @@ model Notice {
 
   @@map("notices")
 }
-

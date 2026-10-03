@@ -55,14 +55,18 @@ export class AdminTournamentsController {
     return toTournamentResponse(tournament, undefined, true);
   }
 
-  @Post(':id/room')
+  @Post([':id/room', ':id/room-details'])
   async setRoomCredentials(
     @CurrentUser() user: JwtUser,
     @Param('id') id: string,
     @Body() dto: SetRoomCredentialsDto,
-  ): Promise<TournamentResponse> {
+  ): Promise<TournamentResponse & { success: true; message: string }> {
     const tournament = await this.tournamentsService.setRoomCredentials(user.sub, id, dto);
-    return toTournamentResponse(tournament, undefined, true);
+    return {
+      ...toTournamentResponse(tournament, undefined, true),
+      success: true,
+      message: 'Room details published successfully',
+    };
   }
 
   @Post(':id/disqualify')

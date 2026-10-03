@@ -3,7 +3,11 @@ import { Team, TeamMember, User, GameProfile, Game } from '@prisma/client';
 export interface TeamMemberResponse {
   id: string;
   user_id: string;
+  name?: string;
+  ign?: string | null;
+  uid?: string | null;
   role: string;
+  roster_type: 'MAIN' | 'SUBSTITUTE';
   joined_at: Date;
   user?: {
     id: string;
@@ -25,6 +29,9 @@ export interface TeamResponse {
   logo_url: string | null;
   captain_id: string;
   invite_code: string;
+  code?: string;
+  tournament_id?: string | null;
+  is_registered?: boolean;
   accepting_substitutes: boolean;
   created_at: Date;
   members?: TeamMemberResponse[];
@@ -71,15 +78,22 @@ export interface TeamDetailResponse {
 
 export const toTeamMemberResponse = (
   member: TeamMember & { user?: User & { gameProfiles?: GameProfile[] } },
+  gameId?: string,
 ): TeamMemberResponse => {
-  const profile = member.user?.gameProfiles?.[0];
+  const profile = gameId
+    ? member.user?.gameProfiles?.find((gameProfile) => gameProfile.gameId === gameId)
+    : member.user?.gameProfiles?.[0];
   return {
     id: member.id,
     user_id: member.userId,
     role: member.role,
+    roster_type: member.role === 'SUBSTITUTE' ? 'SUBSTITUTE' : 'MAIN',
     joined_at: member.joinedAt,
     ...(member.user
       ? {
+          name: member.user.name,
+          ign: profile?.inGameName ?? null,
+          uid: profile?.inGameUid ?? null,
           user: {
             id: member.user.id,
             name: member.user.name,
@@ -107,9 +121,11 @@ export const toTeamResponse = (
   logo_url: team.logoUrl,
   captain_id: team.captainId,
   invite_code: team.inviteCode,
+  code: team.inviteCode,
+  tournament_id: team.tournamentId,
   accepting_substitutes: team.acceptingSubstitutes ?? true,
   created_at: team.createdAt,
-  ...(team.members ? { members: team.members.map(toTeamMemberResponse) } : {}),
+  ...(team.members ? { members: team.members.map((member) => toTeamMemberResponse(member, team.gameId)) } : {}),
 });
 
 export const toTeamSummaryResponse = (

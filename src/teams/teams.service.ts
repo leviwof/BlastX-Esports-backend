@@ -11,7 +11,7 @@ import {
   toTeamDetailResponse,
 } from './team.mapper';
 import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
-import { Prisma, TeamMemberRole, Team, TeamMember, User, GameProfile, RegistrationStatus } from '@prisma/client';
+import { Prisma, TeamMemberRole, TeamMode, Team, TeamMember, User, GameProfile, RegistrationStatus } from '@prisma/client';
 import { randomBytes } from 'crypto';
 
 
@@ -161,6 +161,8 @@ export class TeamsService {
       }
     }
 
+    await this.assertRosterUnlocked(team.id);
+
     // Must have a Game Profile for team's game
     let profile = await this.prisma.gameProfile.findUnique({
       where: {
@@ -187,9 +189,29 @@ export class TeamsService {
       throw new BadRequestException('You are already a member of this team');
     }
 
-    // Check total roster limit (max 5: 4 main + 1 substitute)
-    if (team.members.length >= 5) {
-      throw new BadRequestException('Team roster is full (maximum 5 members allowed)');
+    if (team.tournamentId) {
+      const existingTournamentTeam = await this.prisma.teamMember.findFirst({
+        where: {
+          userId,
+          team: { tournamentId: team.tournamentId },
+        },
+        select: { teamId: true },
+      });
+      if (existingTournamentTeam && existingTournamentTeam.teamId !== team.id) {
+        throw new BadRequestException('You are already a member of another team in this tournament');
+      }
+    }
+
+    const tournament = team.tournamentId
+      ? await this.prisma.tournament.findUnique({
+          where: { id: team.tournamentId },
+          select: { teamMode: true },
+        })
+      : null;
+    const maxMainPlayers = tournament?.teamMode === TeamMode.DUO ? 2 : 4;
+    const maxRosterSize = maxMainPlayers + (team.acceptingSubstitutes ? 1 : 0);
+    if (team.members.length >= maxRosterSize) {
+      throw new BadRequestException(`Team roster is full (maximum ${maxRosterSize} members allowed)`);
     }
 
     // Determine target role (Substitute vs Main Player)
@@ -202,7 +224,7 @@ export class TeamsService {
     const existingSub = team.members.some((m) => m.role === TeamMemberRole.SUBSTITUTE);
 
     // If main roster is full, fallback to substitute if team accepts substitutes and has slot
-    if (!isJoiningAsSubstitute && mainPlayers.length >= 4) {
+    if (!isJoiningAsSubstitute && mainPlayers.length >= maxMainPlayers) {
       if (team.acceptingSubstitutes && !existingSub) {
         isJoiningAsSubstitute = true;
       }
@@ -218,9 +240,9 @@ export class TeamsService {
       }
       targetRole = TeamMemberRole.SUBSTITUTE;
     } else {
-      if (mainPlayers.length >= 4) {
+      if (mainPlayers.length >= maxMainPlayers) {
         throw new BadRequestException(
-          'Main roster is full (maximum 4 players). You can join as a substitute if the team accepts substitutes.',
+          `Main roster is full (maximum ${maxMainPlayers} players). You can join as a substitute if the team accepts substitutes.`,
         );
       }
     }
@@ -264,6 +286,7 @@ export class TeamsService {
 
   async leaveTeam(userId: string, teamId: string): Promise<{ message: string }> {
     const team = await this.getTeamById(teamId);
+    await this.assertRosterUnlocked(teamId);
     const member = team.members.find((m) => m.userId === userId);
     if (!member) {
       throw new NotFoundException('You are not a member of this team');
@@ -287,6 +310,7 @@ export class TeamsService {
 
   async removeMember(captainId: string, teamId: string, targetUserId: string): Promise<{ message: string }> {
     const team = await this.getTeamById(teamId);
+    await this.assertRosterUnlocked(teamId);
     if (team.captainId !== captainId) {
       throw new ForbiddenException('Only the team captain can remove members');
     }
@@ -321,6 +345,7 @@ export class TeamsService {
 
   async transferCaptaincy(captainId: string, teamId: string, newCaptainId: string): Promise<TeamWithMembers> {
     const team = await this.getTeamById(teamId);
+    await this.assertRosterUnlocked(teamId);
     if (team.captainId !== captainId) {
       throw new ForbiddenException('Only the current team captain can transfer captaincy');
     }
@@ -491,6 +516,17 @@ export class TeamsService {
 
     return toTeamDetailResponse(team);
   }
+
+  private async assertRosterUnlocked(teamId: string): Promise<void> {
+    const registration = await this.prisma.tournamentRegistration.findFirst({
+      where: { teamId, status: RegistrationStatus.CONFIRMED },
+      select: { id: true },
+    });
+    if (registration) {
+      throw new BadRequestException({
+        code: 'TEAM_ROSTER_LOCKED',
+        message: 'The team roster cannot be changed after tournament registration.',
+      });
+    }
+  }
 }
-
-
