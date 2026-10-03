@@ -5,6 +5,7 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma, NoticeSeverity } from '@prisma/client';
@@ -56,6 +57,15 @@ export class ContentService {
     const filename = `${randomUUID()}.${image.extension}`;
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+    const driveClientId = process.env.GOOGLE_DRIVE_CLIENT_ID || process.env.GOOGLE_CLIENT_IDS?.split(',')[0];
+    const googleDriveConfigured = Boolean(
+      process.env.GOOGLE_DRIVE_REFRESH_TOKEN && driveClientId && process.env.GOOGLE_DRIVE_CLIENT_SECRET,
+    );
+
+    const driveUrl = await this.uploadImageToGoogleDrive(filename, image.mimeType, file.buffer);
+    if (driveUrl) {
+      return { image_url: driveUrl };
+    }
 
     if (supabaseUrl && supabaseKey) {
       const objectPath = `admin-images/${filename}`;
@@ -77,13 +87,23 @@ export class ContentService {
       }
 
       if (!response.ok) {
-        this.logger.error(`Image storage rejected upload with status ${response.status}`);
+        const details = await response.text();
+        this.logger.error(`Image storage rejected upload with status ${response.status}: ${details}`);
         throw new BadGatewayException('Image upload failed. Please try again.');
       }
 
       return {
         image_url: `${supabaseUrl}/storage/v1/object/public/proofs/${objectPath}`,
       };
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+      if (googleDriveConfigured) {
+        throw new BadGatewayException('Image storage is unavailable. Please try again later.');
+      }
+      throw new ServiceUnavailableException(
+        'Image storage is not configured. Set up Google Drive or Supabase storage for production uploads.',
+      );
     }
 
     const uploadsDir = path.join(process.cwd(), 'uploads', 'admin-images');
@@ -97,6 +117,117 @@ export class ContentService {
 
     const baseUrl = (process.env.BASE_URL || 'http://localhost:3000').replace(/\/+$/, '');
     return { image_url: `${baseUrl}/uploads/admin-images/${filename}` };
+  }
+
+  private async uploadImageToGoogleDrive(
+    filename: string,
+    mimeType: string,
+    buffer: Buffer,
+  ): Promise<string | null> {
+    const clean = (value?: string) => value?.trim().replace(/^["']|["']$/g, '') || '';
+    const refreshToken = clean(process.env.GOOGLE_DRIVE_REFRESH_TOKEN);
+    const clientId = clean(process.env.GOOGLE_DRIVE_CLIENT_ID) || clean(process.env.GOOGLE_CLIENT_IDS?.split(',')[0]);
+    const clientSecret = clean(process.env.GOOGLE_DRIVE_CLIENT_SECRET);
+    if (!refreshToken || !clientId || !clientSecret) {
+      return null;
+    }
+
+    let uploadedFileId: string | null = null;
+    let accessToken: string | undefined;
+    try {
+      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: refreshToken,
+          grant_type: 'refresh_token',
+        }),
+      });
+      if (!tokenResponse.ok) {
+        this.logger.error(`Google Drive token exchange failed with status ${tokenResponse.status}`);
+        return null;
+      }
+
+      ({ access_token: accessToken } = (await tokenResponse.json()) as { access_token: string });
+      const boundary = `blastix-image-${randomUUID()}`;
+      const delimiter = `\r\n--${boundary}\r\n`;
+      const closeDelimiter = `\r\n--${boundary}--`;
+      const metadata: Record<string, string | string[]> = {
+        name: filename,
+        mimeType,
+        description: 'BlastiX admin content image',
+      };
+      const folderId = clean(process.env.GOOGLE_DRIVE_IMAGES_FOLDER_ID) || clean(process.env.GOOGLE_DRIVE_FOLDER_ID);
+      if (folderId) metadata.parents = [folderId];
+
+      const body = Buffer.concat([
+        Buffer.from(
+          `${delimiter}Content-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}${delimiter}Content-Type: ${mimeType}\r\n\r\n`,
+        ),
+        buffer,
+        Buffer.from(closeDelimiter),
+      ]);
+      const uploadResponse = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': `multipart/related; boundary=${boundary}`,
+            'Content-Length': String(body.length),
+          },
+          body: new Uint8Array(body),
+        },
+      );
+      if (!uploadResponse.ok) {
+        const details = await uploadResponse.text();
+        this.logger.error(`Google Drive image upload failed with status ${uploadResponse.status}: ${details}`);
+        return null;
+      }
+
+      const { id } = (await uploadResponse.json()) as { id: string };
+      uploadedFileId = id;
+      const permissionResponse = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${id}/permissions?supportsAllDrives=true`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ role: 'reader', type: 'anyone' }),
+        },
+      );
+      if (!permissionResponse.ok) {
+        const details = await permissionResponse.text();
+        this.logger.error(`Google Drive image permission setup failed with status ${permissionResponse.status}: ${details}`);
+        await this.deleteGoogleDriveImage(id, accessToken);
+        return null;
+      }
+      return `https://drive.google.com/thumbnail?id=${id}&sz=w1600`;
+    } catch (error) {
+      this.logger.error(`Google Drive image upload failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (uploadedFileId && accessToken) {
+        await this.deleteGoogleDriveImage(uploadedFileId, accessToken);
+      }
+      return null;
+    }
+  }
+
+  private async deleteGoogleDriveImage(fileId: string, accessToken: string): Promise<void> {
+    try {
+      const response = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true`,
+        { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      if (!response.ok) {
+        this.logger.error(`Could not remove incomplete Google Drive image ${fileId}: status ${response.status}`);
+      }
+    } catch (error) {
+      this.logger.error(`Could not remove incomplete Google Drive image ${fileId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private detectImageType(buffer: Buffer): { mimeType: string; extension: string } | null {
