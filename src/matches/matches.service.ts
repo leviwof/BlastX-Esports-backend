@@ -104,6 +104,7 @@ export class MatchesService {
           match.tournament.format,
           item.placement,
           item.kills,
+          match.tournament.perKillReward,
         );
 
         const res = await tx.matchResult.upsert({

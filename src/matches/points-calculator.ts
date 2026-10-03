@@ -17,15 +17,16 @@ export function calculatePoints(
   format: TournamentFormat,
   placement: number,
   kills: number,
+  perKillReward = 1,
 ): { placementPoints: number; killPoints: number; totalPoints: number } {
   if (format === TournamentFormat.CLASH_SQUAD) {
     const placementPoints = placement === 1 ? 1 : 0;
-    const killPoints = kills;
+    const killPoints = kills * perKillReward;
     return { placementPoints, killPoints, totalPoints: placementPoints + killPoints };
   }
 
   // Battle Royale
   const placementPoints = BR_PLACEMENT_POINTS[placement] || 0;
-  const killPoints = kills * 1;
+  const killPoints = kills * perKillReward;
   return { placementPoints, killPoints, totalPoints: placementPoints + killPoints };
 }

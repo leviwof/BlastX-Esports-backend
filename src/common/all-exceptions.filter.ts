@@ -72,6 +72,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
       };
     }
 
+    // Preserve safe, client-actionable metadata from explicitly constructed
+    // HTTP errors (for example the room-credential release timestamp).
+    if (typeof payload === 'object' && payload !== null && typeof (payload as any).reveal_at === 'string') {
+      responseBody.reveal_at = (payload as any).reveal_at;
+    }
+
     response.status(status).json(responseBody);
   }
 }

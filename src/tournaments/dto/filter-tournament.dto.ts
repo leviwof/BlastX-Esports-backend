@@ -52,6 +52,11 @@ export class FilterTournamentQueryDto extends PaginationQueryDto {
   @IsString()
   q?: string;
 
+  /** Opaque pagination cursor accepted by the mobile contract. */
+  @IsOptional()
+  @IsString()
+  cursor?: string;
+
   @IsOptional()
   @IsDateString()
   date_from?: string;

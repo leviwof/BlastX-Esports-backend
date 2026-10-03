@@ -9,7 +9,6 @@ import {
   UseGuards,
   Req,
   Res,
-  Header,
 } from '@nestjs/common';
 import { TournamentsService } from './tournaments.service';
 import { MatchesService } from '../matches/matches.service';
@@ -110,8 +109,9 @@ export class TournamentsController {
   async getRoomDetails(
     @CurrentUser() user: JwtUser,
     @Param('id') id: string,
-  ): Promise<{ room_id: string; room_password: string; room_released_at: Date | null }> {
-    return this.tournamentsService.getRoomCredentials(user.sub, id);
+  ) {
+    const room = await this.tournamentsService.getRoomCredentials(user.sub, id);
+    return { status: 'success', data: room };
   }
 
   @Public()

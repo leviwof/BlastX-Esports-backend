@@ -186,6 +186,27 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         roomPassword: t.roomPassword,
       });
     }
+
+    // 4. A tournament becomes live at its scheduled start.  It is completed
+    // only once it has matches and every match has been completed.
+    const toGoLive = await this.prisma.tournament.findMany({
+      where: {
+        status: { in: [TournamentStatus.UPCOMING, TournamentStatus.REGISTRATION_OPEN, TournamentStatus.REGISTRATION_CLOSED] },
+        startsAt: { lte: now },
+      },
+    });
+    for (const t of toGoLive) {
+      await this.prisma.tournament.update({ where: { id: t.id }, data: { status: TournamentStatus.LIVE } });
+      this.eventEmitter.emit('status.changed', { tournamentId: t.id, oldStatus: t.status, newStatus: TournamentStatus.LIVE });
+    }
+
+    const completed = await this.prisma.tournament.findMany({
+      where: { status: TournamentStatus.LIVE, matches: { some: {}, every: { status: TournamentStatus.COMPLETED } } },
+    });
+    for (const t of completed) {
+      await this.prisma.tournament.update({ where: { id: t.id }, data: { status: TournamentStatus.COMPLETED } });
+      this.eventEmitter.emit('status.changed', { tournamentId: t.id, oldStatus: t.status, newStatus: TournamentStatus.COMPLETED });
+    }
   } catch (err: any) {
     this.logger.error(`[SCHEDULER] Lifecycle check error: ${err.message}`, err.stack);
   }

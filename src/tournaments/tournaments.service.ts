@@ -2,7 +2,8 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
-  ForbiddenException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -217,6 +218,7 @@ export class TournamentsService {
 
   async getTournaments(
     dto: FilterTournamentQueryDto,
+    requiredSection?: TournamentSection,
   ): Promise<PaginatedResult<Tournament & { game: { slug: string } }> & { counts: { live: number; upcoming: number; completed: number } }> {
     const where: any = {
       // Always exclude DRAFT and CANCELLED from the public list
@@ -240,7 +242,9 @@ export class TournamentsService {
     }
 
     if (dto.team_mode) where.teamMode = dto.team_mode;
-    if (dto.section) where.section = dto.section;
+    // The two app experiences are intentionally separate catalogs.  The
+    // general tournament endpoint must never leak Free Fire Live events.
+    where.section = requiredSection ?? dto.section ?? TournamentSection.BLASTX;
     if (dto.format) where.format = dto.format;
     if (dto.map) where.map = { contains: dto.map, mode: 'insensitive' };
 
@@ -276,7 +280,7 @@ export class TournamentsService {
     // show totals for the full game, not just the current filtered subset).
     const countsWhere: any = { status: { in: TournamentsService.PUBLIC_STATUSES } };
     if (where.game) countsWhere.game = where.game;
-    if (dto.section) countsWhere.section = dto.section;
+    countsWhere.section = requiredSection ?? dto.section ?? TournamentSection.BLASTX;
 
     const [items, total, liveCount, upcomingCount, completedCount] = await Promise.all([
       this.prisma.tournament.findMany({
@@ -561,7 +565,7 @@ export class TournamentsService {
     });
   }
 
-  async getRoomCredentials(userId: string, tournamentId: string): Promise<{ room_id: string; room_password: string; room_released_at: Date | null }> {
+  async getRoomCredentials(userId: string, tournamentId: string): Promise<{ room_id: string; room_password: string; visibleFrom: Date }> {
     const tournament = await this.getTournamentEntity(tournamentId);
 
     // Check if user is registered directly or through a team
@@ -580,19 +584,30 @@ export class TournamentsService {
     });
 
     if (!registration) {
-      throw new ForbiddenException('You must be registered in this tournament to view room details');
+      throw new HttpException(
+        { code: 'NOT_REGISTERED', message: 'You are not registered for this tournament.' },
+        HttpStatus.FORBIDDEN,
+      );
     }
 
     const now = new Date();
     const isReleased = tournament.roomReleasedAt && tournament.roomReleasedAt <= now;
     if (!isReleased || !tournament.roomId || !tournament.roomPassword) {
-      throw new ForbiddenException('Room credentials have not been released yet for this tournament');
+      const revealAt = tournament.roomReleasedAt ?? new Date(tournament.startsAt.getTime() - 15 * 60 * 1000);
+      throw new HttpException(
+        {
+          code: 'ROOM_NOT_AVAILABLE',
+          message: 'Room details will be released 15 minutes before match start.',
+          reveal_at: revealAt.toISOString(),
+        },
+        425,
+      );
     }
 
     return {
       room_id: tournament.roomId,
       room_password: tournament.roomPassword,
-      room_released_at: tournament.roomReleasedAt,
+      visibleFrom: tournament.roomReleasedAt!,
     };
   }
 
