@@ -1,6 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma, NoticeSeverity } from '@prisma/client';
+import { mkdir, writeFile } from 'fs/promises';
+import { randomUUID } from 'crypto';
+import * as path from 'path';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { UpdateBannerDto } from './dto/update-banner.dto';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
@@ -18,9 +28,102 @@ import {
 } from './content.mapper';
 import { createPaginatedResponse, PaginatedResult } from '../common/pagination.dto';
 
+export interface UploadedImageFile {
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+}
+
 @Injectable()
 export class ContentService {
+  private readonly logger = new Logger(ContentService.name);
+
   constructor(private readonly prisma: PrismaService) {}
+
+  async uploadImage(file?: UploadedImageFile): Promise<{ image_url: string }> {
+    if (!file) {
+      throw new BadRequestException('Select an image to upload');
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      throw new BadRequestException('Image must be 8 MB or smaller');
+    }
+
+    const image = this.detectImageType(file.buffer);
+    if (!image || image.mimeType !== file.mimetype) {
+      throw new BadRequestException('Invalid image file. Upload a JPEG, PNG, GIF or WebP image');
+    }
+
+    const filename = `${randomUUID()}.${image.extension}`;
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+
+    if (supabaseUrl && supabaseKey) {
+      const objectPath = `admin-images/${filename}`;
+      let response: Response;
+      try {
+        response = await fetch(`${supabaseUrl}/storage/v1/object/proofs/${objectPath}`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${supabaseKey}`,
+            apikey: supabaseKey,
+            'Content-Type': image.mimeType,
+            'x-upsert': 'true',
+          },
+          body: new Uint8Array(file.buffer),
+        });
+      } catch (error) {
+        this.logger.error(`Image storage request failed: ${error instanceof Error ? error.message : String(error)}`);
+        throw new BadGatewayException('Image upload failed. Please try again.');
+      }
+
+      if (!response.ok) {
+        this.logger.error(`Image storage rejected upload with status ${response.status}`);
+        throw new BadGatewayException('Image upload failed. Please try again.');
+      }
+
+      return {
+        image_url: `${supabaseUrl}/storage/v1/object/public/proofs/${objectPath}`,
+      };
+    }
+
+    const uploadsDir = path.join(process.cwd(), 'uploads', 'admin-images');
+    try {
+      await mkdir(uploadsDir, { recursive: true });
+      await writeFile(path.join(uploadsDir, filename), file.buffer);
+    } catch (error) {
+      this.logger.error(`Local image storage failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new InternalServerErrorException('Image upload failed. Please try again.');
+    }
+
+    const baseUrl = (process.env.BASE_URL || 'http://localhost:3000').replace(/\/+$/, '');
+    return { image_url: `${baseUrl}/uploads/admin-images/${filename}` };
+  }
+
+  private detectImageType(buffer: Buffer): { mimeType: string; extension: string } | null {
+    if (
+      buffer.length >= 8 &&
+      buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    ) {
+      return { mimeType: 'image/png', extension: 'png' };
+    }
+    if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+      return { mimeType: 'image/jpeg', extension: 'jpg' };
+    }
+    if (
+      buffer.length >= 6 &&
+      (buffer.toString('ascii', 0, 6) === 'GIF87a' || buffer.toString('ascii', 0, 6) === 'GIF89a')
+    ) {
+      return { mimeType: 'image/gif', extension: 'gif' };
+    }
+    if (
+      buffer.length >= 12 &&
+      buffer.toString('ascii', 0, 4) === 'RIFF' &&
+      buffer.toString('ascii', 8, 12) === 'WEBP'
+    ) {
+      return { mimeType: 'image/webp', extension: 'webp' };
+    }
+    return null;
+  }
 
   // ---------------- BANNERS ----------------
   async listBanners(query: ListContentQuery): Promise<PaginatedResult<BannerResponse>> {

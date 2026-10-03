@@ -4,6 +4,7 @@ import { ContentController } from './content.controller';
 import { AdminBannersController } from './admin-banners.controller';
 import { AdminAnnouncementsController } from './admin-announcements.controller';
 import { AdminNoticesController } from './admin-notices.controller';
+import { AdminImageUploadController } from './admin-image-upload.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
@@ -13,6 +14,7 @@ import { PrismaModule } from '../prisma/prisma.module';
     AdminBannersController,
     AdminAnnouncementsController,
     AdminNoticesController,
+    AdminImageUploadController,
   ],
   providers: [ContentService],
   exports: [ContentService],
