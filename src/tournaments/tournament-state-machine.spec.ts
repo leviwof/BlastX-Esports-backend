@@ -9,7 +9,8 @@ describe('Tournament State Machine', () => {
     expect(() => validateStatusTransition(TournamentStatus.DRAFT, TournamentStatus.CANCELLED)).not.toThrow();
   });
 
-  it('allows valid transitions from REGISTRATION_OPEN to REGISTRATION_CLOSED', () => {
+  it('allows valid transitions from REGISTRATION_OPEN to UPCOMING or REGISTRATION_CLOSED', () => {
+    expect(() => validateStatusTransition(TournamentStatus.REGISTRATION_OPEN, TournamentStatus.UPCOMING)).not.toThrow();
     expect(() => validateStatusTransition(TournamentStatus.REGISTRATION_OPEN, TournamentStatus.REGISTRATION_CLOSED)).not.toThrow();
   });
 
