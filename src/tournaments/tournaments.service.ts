@@ -219,11 +219,13 @@ export class TournamentsService {
   async getTournaments(
     dto: FilterTournamentQueryDto,
     requiredSection?: TournamentSection,
+    includeNonPublic = false,
   ): Promise<PaginatedResult<Tournament & { game: { slug: string } }> & { counts: { live: number; upcoming: number; completed: number } }> {
-    const where: any = {
-      // Always exclude DRAFT and CANCELLED from the public list
-      status: { in: TournamentsService.PUBLIC_STATUSES },
-    };
+    // Player-facing lists hide drafts/cancelled events; the admin catalogue
+    // includes them so a new DRAFT can immediately be edited or published.
+    const where: any = includeNonPublic
+      ? {}
+      : { status: { in: TournamentsService.PUBLIC_STATUSES } };
 
     // Status filter — expand UPCOMING to its three constituent statuses
     if (dto.status) {
@@ -234,6 +236,8 @@ export class TournamentsService {
         where.status = TournamentStatus.LIVE;
       } else if (s === 'COMPLETED') {
         where.status = TournamentStatus.COMPLETED;
+      } else if (includeNonPublic && Object.values(TournamentStatus).includes(s as TournamentStatus)) {
+        where.status = s as TournamentStatus;
       } else {
         // Unknown status — keep the public filter (don't return an error;
         // the app may send other values in future).

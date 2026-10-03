@@ -43,12 +43,14 @@ export class TournamentsController {
     const result = await this.tournamentsService.getTournaments(query);
     return {
       status: 'success',
-      data: result.items.map((item) => toTournamentResponse(item)),
-      // Chip counts: independent of the active status/q filter
-      counts: result.counts,
-      page: result.page,
-      limit: result.limit,
-      total: result.total,
+      // API clients unwrap this envelope, so pagination must live in `data`.
+      data: {
+        items: result.items.map((item) => toTournamentResponse(item)),
+        counts: result.counts,
+        page: result.page,
+        limit: result.limit,
+        total: result.total,
+      },
     };
   }
 

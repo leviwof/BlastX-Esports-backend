@@ -1,4 +1,4 @@
-import { Controller, Post, Patch, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { TournamentsService } from './tournaments.service';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { RolesGuard } from '../common/roles.guard';
@@ -11,12 +11,23 @@ import { SetRoomCredentialsDto } from './dto/set-room.dto';
 import { DisqualifyRegistrationDto } from './dto/disqualify.dto';
 import { toTournamentResponse, toTournamentRegistrationResponse, TournamentResponse, TournamentRegistrationResponse } from './tournament.mapper';
 import { UserRole } from '@prisma/client';
+import { FilterTournamentQueryDto } from './dto/filter-tournament.dto';
 
 @Controller('admin/tournaments')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN)
 export class AdminTournamentsController {
   constructor(private readonly tournamentsService: TournamentsService) {}
+
+  /** Includes DRAFT/CANCELLED events, unlike the player-facing catalogue. */
+  @Get()
+  async getTournaments(@Query() query: FilterTournamentQueryDto) {
+    const result = await this.tournamentsService.getTournaments(query, undefined, true);
+    return {
+      ...result,
+      items: result.items.map((item) => toTournamentResponse(item)),
+    };
+  }
 
   @Post()
   async createTournament(@CurrentUser() user: JwtUser, @Body() dto: CreateTournamentDto): Promise<TournamentResponse> {
