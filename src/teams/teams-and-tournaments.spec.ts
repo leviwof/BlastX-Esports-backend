@@ -183,6 +183,74 @@ describe('Teams & Tournaments Features', () => {
   });
 
   describe('Tournaments: my-team, teams, and code preview', () => {
+    it('rejects registration while the tournament is UPCOMING', async () => {
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        status: TournamentStatus.UPCOMING,
+      });
+
+      await expect(
+        tournamentsService.registerUserOrTeam('user-1', 'tour-1', {}),
+      ).rejects.toThrow('Registration opens only when the tournament is LIVE');
+      expect(mockPrisma.team.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('rejects SQUAD registration unless the team has exactly four members', async () => {
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        gameId: 'game-1',
+        status: TournamentStatus.LIVE,
+        teamMode: TeamMode.SQUAD,
+      });
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-1',
+        gameId: 'game-1',
+        captainId: 'user-cap',
+        members: [
+          { userId: 'user-cap', role: TeamMemberRole.CAPTAIN },
+          { userId: 'user-p2', role: TeamMemberRole.PLAYER },
+          { userId: 'user-p3', role: TeamMemberRole.PLAYER },
+        ],
+      });
+
+      await expect(
+        tournamentsService.registerUserOrTeam('user-cap', 'tour-1', { team_id: 'team-1' }),
+      ).rejects.toThrow('requires exactly 4 team members to play');
+    });
+
+    it('creates a team during UPCOMING without registering it', async () => {
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        gameId: 'game-1',
+        status: TournamentStatus.UPCOMING,
+      });
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.gameProfile.findUnique.mockResolvedValue({ id: 'profile-1' });
+      mockPrisma.team.create.mockResolvedValue({
+        id: 'team-1',
+        gameId: 'game-1',
+        name: 'Alpha',
+        tag: 'ALPH',
+        logoUrl: null,
+        captainId: 'user-cap',
+        inviteCode: 'CODE1234',
+        acceptingSubstitutes: true,
+        createdAt: new Date(),
+        members: [],
+      });
+
+      const created = await tournamentsService.createTournamentTeam('user-cap', 'tour-1', {
+        name: ' Alpha ',
+        tag: 'alph',
+      });
+
+      expect(created.is_registered_in_tournament).toBe(false);
+      expect(created.slot_number).toBeNull();
+      expect(mockPrisma.team.create).toHaveBeenCalled();
+      expect(mockPrisma.tournamentRegistration.create).not.toHaveBeenCalled();
+      expect(mockPrisma.tournament.update).not.toHaveBeenCalled();
+    });
+
     it('previewTeamByCode returns team preview and slot availability', async () => {
       mockPrisma.tournament.findUnique.mockResolvedValue({
         id: 'tour-1',

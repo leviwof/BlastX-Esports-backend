@@ -3,18 +3,20 @@ import { TournamentStatus } from '@prisma/client';
 import { BadRequestException } from '@nestjs/common';
 
 describe('Tournament State Machine', () => {
-  it('allows valid transitions from DRAFT to UPCOMING or REGISTRATION_OPEN', () => {
+  it('allows publishing a DRAFT tournament as UPCOMING', () => {
     expect(() => validateStatusTransition(TournamentStatus.DRAFT, TournamentStatus.UPCOMING)).not.toThrow();
-    expect(() => validateStatusTransition(TournamentStatus.DRAFT, TournamentStatus.REGISTRATION_OPEN)).not.toThrow();
     expect(() => validateStatusTransition(TournamentStatus.DRAFT, TournamentStatus.CANCELLED)).not.toThrow();
   });
 
-  it('allows valid transitions from REGISTRATION_OPEN to UPCOMING or REGISTRATION_CLOSED', () => {
-    expect(() => validateStatusTransition(TournamentStatus.REGISTRATION_OPEN, TournamentStatus.UPCOMING)).not.toThrow();
-    expect(() => validateStatusTransition(TournamentStatus.REGISTRATION_OPEN, TournamentStatus.REGISTRATION_CLOSED)).not.toThrow();
+  it('does not open registration from UPCOMING before the tournament is LIVE', () => {
+    expect(() => validateStatusTransition(TournamentStatus.UPCOMING, TournamentStatus.REGISTRATION_OPEN)).toThrow(
+      BadRequestException,
+    );
+    expect(() => validateStatusTransition(TournamentStatus.UPCOMING, TournamentStatus.LIVE)).not.toThrow();
   });
 
-  it('allows valid transitions from REGISTRATION_CLOSED to LIVE', () => {
+  it('allows legacy registration states to transition to LIVE', () => {
+    expect(() => validateStatusTransition(TournamentStatus.REGISTRATION_OPEN, TournamentStatus.LIVE)).not.toThrow();
     expect(() => validateStatusTransition(TournamentStatus.REGISTRATION_CLOSED, TournamentStatus.LIVE)).not.toThrow();
   });
 

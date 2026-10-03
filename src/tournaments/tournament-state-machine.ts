@@ -2,12 +2,12 @@ import { TournamentStatus } from '@prisma/client';
 import { BadRequestException } from '@nestjs/common';
 
 const ALLOWED_TRANSITIONS: Record<TournamentStatus, TournamentStatus[]> = {
-  [TournamentStatus.DRAFT]: [TournamentStatus.UPCOMING, TournamentStatus.REGISTRATION_OPEN, TournamentStatus.CANCELLED],
-  [TournamentStatus.UPCOMING]: [TournamentStatus.REGISTRATION_OPEN, TournamentStatus.CANCELLED],
-  // Admins may move an event back to UPCOMING after correcting its schedule.
-  // This is deliberately limited to the pre-registration lifecycle; live or
-  // completed results can never be rolled back through this endpoint.
-  [TournamentStatus.REGISTRATION_OPEN]: [TournamentStatus.UPCOMING, TournamentStatus.REGISTRATION_CLOSED, TournamentStatus.CANCELLED],
+  [TournamentStatus.DRAFT]: [TournamentStatus.UPCOMING, TournamentStatus.LIVE, TournamentStatus.CANCELLED],
+  // Upcoming events are countdown/notification-only. Registration opens only
+  // when the tournament becomes LIVE.
+  [TournamentStatus.UPCOMING]: [TournamentStatus.LIVE, TournamentStatus.CANCELLED],
+  // Retain transitions for tournaments that were already in these legacy states.
+  [TournamentStatus.REGISTRATION_OPEN]: [TournamentStatus.LIVE, TournamentStatus.CANCELLED],
   [TournamentStatus.REGISTRATION_CLOSED]: [TournamentStatus.LIVE, TournamentStatus.CANCELLED],
   [TournamentStatus.LIVE]: [TournamentStatus.COMPLETED, TournamentStatus.CANCELLED],
   [TournamentStatus.COMPLETED]: [],

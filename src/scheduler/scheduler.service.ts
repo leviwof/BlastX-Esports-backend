@@ -119,29 +119,9 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       const now = new Date();
       const roomReleaseMinutes = Number(this.config.get<number>('ROOM_RELEASE_MINUTES') || 15);
 
-      // 1. Auto Open Registration: UPCOMING or DRAFT where registrationOpensAt <= now
-      const toOpen = await this.prisma.tournament.findMany({
-        where: {
-          status: { in: [TournamentStatus.UPCOMING, TournamentStatus.DRAFT] },
-          registrationOpensAt: { lte: now },
-          registrationClosesAt: { gt: now },
-        },
-      });
-
-    for (const t of toOpen) {
-      await this.prisma.tournament.update({
-        where: { id: t.id },
-        data: { status: TournamentStatus.REGISTRATION_OPEN },
-      });
-      this.logger.log(`[SCHEDULER] Updated tournament "${t.title}" status to REGISTRATION_OPEN`);
-      this.eventEmitter.emit('status.changed', {
-        tournamentId: t.id,
-        oldStatus: t.status,
-        newStatus: TournamentStatus.REGISTRATION_OPEN,
-      });
-    }
-
-    // 2. Auto Close Registration: REGISTRATION_OPEN where registrationClosesAt <= now
+    // Legacy registrations are closed on their configured deadline. New
+    // tournaments stay UPCOMING until startsAt and accept registrations only
+    // after transitioning to LIVE.
     const toClose = await this.prisma.tournament.findMany({
       where: {
         status: TournamentStatus.REGISTRATION_OPEN,
@@ -162,7 +142,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    // 3. Auto Release Room Credentials: startsAt - ROOM_RELEASE_MINUTES <= now
+    // Auto Release Room Credentials: startsAt - ROOM_RELEASE_MINUTES <= now
     const releaseTimeWindow = new Date(now.getTime() + roomReleaseMinutes * 60 * 1000);
     const toReleaseRoom = await this.prisma.tournament.findMany({
       where: {
@@ -187,7 +167,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    // 4. A tournament becomes live at its scheduled start.  It is completed
+    // A tournament becomes live at its scheduled start. It is completed
     // only once it has matches and every match has been completed.
     const toGoLive = await this.prisma.tournament.findMany({
       where: {

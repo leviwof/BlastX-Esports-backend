@@ -361,13 +361,10 @@ export class TournamentsService {
   async registerUserOrTeam(userId: string, tournamentId: string, dto: RegisterTournamentDto): Promise<TournamentRegistration> {
     const tournament = await this.getTournamentEntity(tournamentId);
 
-    if (tournament.status !== TournamentStatus.REGISTRATION_OPEN) {
-      throw new BadRequestException(`Tournament is not open for registration (status is ${tournament.status})`);
-    }
-
-    const now = new Date();
-    if (now < tournament.registrationOpensAt || now > tournament.registrationClosesAt) {
-      throw new BadRequestException('Tournament registration window is currently closed');
+    if (tournament.status !== TournamentStatus.LIVE) {
+      throw new BadRequestException(
+        `Registration opens only when the tournament is LIVE (current status: ${tournament.status})`,
+      );
     }
 
     // Check Paid Tournaments feature flag
@@ -421,8 +418,10 @@ export class TournamentsService {
           throw new BadRequestException('A DUO tournament requires a team with at least 2 players');
         }
       } else if (tournament.teamMode === TeamMode.SQUAD) {
-        if (team.members.length < 4 || team.members.length > 5) {
-          throw new BadRequestException('A SQUAD tournament requires exactly 4 players + optional 1 substitute (total 4 or 5 members)');
+        if (team.members.length !== 4) {
+          throw new BadRequestException(
+            `A SQUAD tournament requires exactly 4 team members to play. Your team currently has ${team.members.length}; add members before registering.`,
+          );
         }
       }
 
@@ -471,7 +470,7 @@ export class TournamentsService {
       const updateResult = await tx.tournament.updateMany({
         where: {
           id: tournamentId,
-          status: TournamentStatus.REGISTRATION_OPEN,
+          status: TournamentStatus.LIVE,
           registeredCount: { lt: tournament.maxSlots },
         },
         data: {
@@ -480,7 +479,7 @@ export class TournamentsService {
       });
 
       if (updateResult.count === 0) {
-        throw new BadRequestException('Tournament registration is full or no longer open');
+        throw new BadRequestException('Tournament registration is full or is no longer LIVE');
       }
 
       // Read updated registered count to assign slot number
@@ -739,39 +738,22 @@ export class TournamentsService {
     const rawLogo = dto.logo_url ?? dto.logoUrl;
     const sanitizedLogoUrl = rawLogo && rawLogo.trim().length > 0 ? rawLogo.trim() : null;
 
-    // Parallel pre-flight fetch
-    const [tournament, currentCount, userTeams, existingName, maxSlot] = await Promise.all([
+    const [tournament, existingName] = await Promise.all([
       this.getTournamentEntity(tournamentId),
-      this.prisma.tournamentRegistration.count({
-        where: { tournamentId, status: RegistrationStatus.CONFIRMED },
-      }),
-      this.prisma.teamMember.findMany({
-        where: { userId },
-        select: { teamId: true },
-      }),
       this.prisma.team.findFirst({
         where: {
           game: { tournaments: { some: { id: tournamentId } } },
           name: { equals: cleanName, mode: 'insensitive' },
         },
       }),
-      this.prisma.tournamentRegistration.aggregate({
-        where: { tournamentId },
-        _max: { slotNumber: true },
-      }),
     ]);
 
-    if (tournament.status !== TournamentStatus.REGISTRATION_OPEN) {
-      throw new BadRequestException(`Tournament is not open for registration (status is ${tournament.status})`);
-    }
-
-    const now = new Date();
-    if (now < tournament.registrationOpensAt || now > tournament.registrationClosesAt) {
-      throw new BadRequestException('Tournament registration window is currently closed');
-    }
-
-    if (currentCount >= tournament.maxSlots) {
-      throw new BadRequestException('Tournament is already full');
+    if (
+      tournament.status === TournamentStatus.DRAFT ||
+      tournament.status === TournamentStatus.CANCELLED ||
+      tournament.status === TournamentStatus.COMPLETED
+    ) {
+      throw new BadRequestException(`Cannot create a team for a tournament with status ${tournament.status}`);
     }
 
     if (existingName) {
@@ -801,77 +783,45 @@ export class TournamentsService {
       throw new BadRequestException('You must set up your Free Fire game profile before creating a team');
     }
 
-    // Verify user is not already registered in this tournament
-    const teamIds = userTeams.map((t) => t.teamId);
-    const existingReg = await this.prisma.tournamentRegistration.findFirst({
-      where: {
-        tournamentId,
-        status: RegistrationStatus.CONFIRMED,
-        OR: [
-          { userId },
-          ...(teamIds.length > 0 ? [{ teamId: { in: teamIds } }] : []),
-        ],
-      },
-    });
-    if (existingReg) {
-      throw new BadRequestException('You are already registered or part of a team in this tournament');
-    }
-
     let inviteCode = randomBytes(4).toString('hex').toUpperCase();
     while (await this.prisma.team.findUnique({ where: { inviteCode } })) {
       inviteCode = randomBytes(4).toString('hex').toUpperCase();
     }
 
-    const nextSlot = (maxSlot._max.slotNumber || 0) + 1;
-
-    // Single pipelined atomic transaction
-    const [team] = await this.prisma.$transaction([
-      this.prisma.team.create({
-        data: {
-          gameId: tournament.gameId,
-          name: cleanName,
-          tag: cleanTag,
-          logoUrl: sanitizedLogoUrl,
-          acceptingSubstitutes: dto.accepting_substitutes ?? true,
-          captainId: userId,
-          inviteCode,
-          members: {
-            create: {
-              userId,
-              role: TeamMemberRole.CAPTAIN,
-            },
+    const team = await this.prisma.team.create({
+      data: {
+        gameId: tournament.gameId,
+        name: cleanName,
+        tag: cleanTag,
+        logoUrl: sanitizedLogoUrl,
+        acceptingSubstitutes: dto.accepting_substitutes ?? true,
+        captainId: userId,
+        inviteCode,
+        members: {
+          create: {
+            userId,
+            role: TeamMemberRole.CAPTAIN,
           },
-          registrations: {
-            create: {
-              tournamentId,
-              userId,
-              status: RegistrationStatus.CONFIRMED,
-              slotNumber: nextSlot,
+        },
+      },
+      include: {
+        captain: true,
+        members: {
+          include: {
+            user: {
+              include: { gameProfiles: true },
             },
           },
         },
-        include: {
-          captain: true,
-          members: {
-            include: {
-              user: {
-                include: { gameProfiles: true },
-              },
-            },
-          },
-        },
-      }),
-      this.prisma.tournament.update({
-        where: { id: tournamentId },
-        data: { registeredCount: { increment: 1 } },
-      }),
-    ]);
+      },
+    });
 
     return {
       ...toTeamResponse(team as any),
       tournament_id: tournamentId,
-      slot_number: nextSlot,
-      registration_status: RegistrationStatus.CONFIRMED,
+      is_registered_in_tournament: false,
+      slot_number: null,
+      registration_status: null,
     };
   }
 
@@ -1078,4 +1028,3 @@ export class TournamentsService {
     };
   }
 }
-
