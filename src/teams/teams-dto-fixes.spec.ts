@@ -75,5 +75,32 @@ describe('Live Section DTO Validation Tests', () => {
       const errors = await validate(dto);
       expect(errors.length).toBe(0);
     });
+
+    it.each([
+      ['empty tag', ''],
+      ['null tag', null],
+      ['missing tag', undefined],
+    ])('accepts a %s', async (_description, tag) => {
+      const payload = {
+        name: 'BLX Warriors',
+        ...(tag !== undefined ? { tag } : {}),
+      };
+      const dto = plainToInstance(CreateTournamentTeamDto, payload);
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+    });
+
+    it('still validates the length and characters of a supplied tag', async () => {
+      const invalidTags = ['A', 'TOOLONG', 'BLX!'];
+
+      for (const tag of invalidTags) {
+        const dto = plainToInstance(CreateTournamentTeamDto, {
+          name: 'BLX Warriors',
+          tag,
+        });
+        const errors = await validate(dto);
+        expect(errors.some((error) => error.property === 'tag')).toBe(true);
+      }
+    });
   });
 });

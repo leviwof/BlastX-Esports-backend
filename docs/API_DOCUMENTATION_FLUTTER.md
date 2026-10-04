@@ -500,6 +500,7 @@ The admin queue refreshes automatically while open.
   }
 }
 ```
+- `tag` is optional. It may be omitted, `""`, or `null`; a non-empty value must be 2–5 alphanumeric characters.
 - **Response `200 OK`**:
 ```json
 {

@@ -858,7 +858,7 @@ export class TournamentsService {
 
   async createTournamentTeam(userId: string, tournamentId: string, dto: CreateTournamentTeamDto) {
     const cleanName = dto.name.trim();
-    const cleanTag = dto.tag.trim().toUpperCase();
+    const cleanTag = (dto.tag ?? '').trim().toUpperCase();
     const rawLogo = dto.logo_url ?? dto.logoUrl;
     const sanitizedLogoUrl = rawLogo && rawLogo.trim().length > 0 ? rawLogo.trim() : null;
 

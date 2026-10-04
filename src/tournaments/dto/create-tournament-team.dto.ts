@@ -1,4 +1,4 @@
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, Length, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, Length, Matches, MaxLength, ValidateIf, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class PlayerDetailsDto {
@@ -21,10 +21,11 @@ export class CreateTournamentTeamDto {
   @Length(3, 30)
   name!: string;
 
-  @IsNotEmpty()
+  @IsOptional()
+  @ValidateIf((_object, value) => typeof value !== 'string' || value.trim().length > 0)
   @IsString()
   @Matches(/^[A-Za-z0-9]{2,5}$/, { message: 'Tag must be 2 to 5 alphanumeric characters' })
-  tag!: string;
+  tag?: string | null;
 
   @IsOptional()
   @IsString()

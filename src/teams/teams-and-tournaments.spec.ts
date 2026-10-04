@@ -352,6 +352,39 @@ describe('Teams & Tournaments Features', () => {
       expect(mockPrisma.tournament.update).not.toHaveBeenCalled();
     });
 
+    it('creates a team with an empty tag when no tag is supplied', async () => {
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        gameId: 'game-1',
+        status: TournamentStatus.UPCOMING,
+      });
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.gameProfile.findUnique.mockResolvedValue({ id: 'profile-1' });
+      mockPrisma.team.create.mockResolvedValue({
+        id: 'team-1',
+        gameId: 'game-1',
+        name: 'Alpha',
+        tag: '',
+        logoUrl: null,
+        captainId: 'user-cap',
+        inviteCode: 'CODE1234',
+        acceptingSubstitutes: true,
+        createdAt: new Date(),
+        members: [],
+      });
+
+      await tournamentsService.createTournamentTeam('user-cap', 'tour-1', {
+        name: 'Alpha',
+        tag: '',
+      });
+
+      expect(mockPrisma.team.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ tag: '' }),
+        }),
+      );
+    });
+
     it('previewTeamByCode returns team preview and slot availability', async () => {
       mockPrisma.tournament.findUnique.mockResolvedValue({
         id: 'tour-1',
