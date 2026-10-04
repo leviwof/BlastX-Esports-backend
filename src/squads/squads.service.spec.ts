@@ -36,16 +36,37 @@ describe('SquadsService', () => {
       },
       squad: {
         findUnique: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
+      team: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+        upsert: jest.fn(),
+      },
+      gameProfile: {
+        count: jest.fn(),
+      },
+      tournament: {
+        findUnique: jest.fn(),
       },
       tournamentInvitation: {
         findUnique: jest.fn(),
+        createMany: jest.fn(),
+        findMany: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn(),
       },
       tournamentRegistration: { findFirst: jest.fn() },
       teamMember: { findFirst: jest.fn() },
-      $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) =>
-        callback(tx),
-      ),
+      $transaction: jest.fn(async (cbOrArr: any) => {
+        if (typeof cbOrArr === 'function') {
+          return cbOrArr(tx);
+        }
+        return Promise.all(cbOrArr);
+      }),
       tx,
     };
     events = { emit: jest.fn() };
@@ -170,5 +191,66 @@ describe('SquadsService', () => {
       where: { id: 'invite-1' },
       data: { status: TournamentInvitationStatus.REJECTED },
     });
+  });
+
+  it('dispatches 4 invitations for a Manager squad owner and 3 invitations for a Leader squad owner', async () => {
+    prisma.squad.findUnique.mockResolvedValue({
+      id: 'squad-mgr',
+      gameId: 'game-1',
+      name: 'Manager Squad',
+      tag: 'MS',
+      logoUrl: null,
+      leaderId: 'mgr-1',
+      ownerRole: 'MANAGER',
+      maxMainPlayers: 4,
+      maxSubstitutes: 2,
+      game: { id: 'game-1', slug: 'free_fire', name: 'Free Fire' },
+      members: [
+        { userId: 'mgr-1', role: 'MANAGER', rosterType: 'MAIN', user: { id: 'mgr-1', name: 'Manager Apex', isActive: true } },
+        { userId: 'p-1', role: 'MEMBER', rosterType: 'MAIN', user: { id: 'p-1', name: 'Player 1', isActive: true } },
+        { userId: 'p-2', role: 'MEMBER', rosterType: 'MAIN', user: { id: 'p-2', name: 'Player 2', isActive: true } },
+        { userId: 'p-3', role: 'MEMBER', rosterType: 'MAIN', user: { id: 'p-3', name: 'Player 3', isActive: true } },
+        { userId: 'p-4', role: 'MEMBER', rosterType: 'MAIN', user: { id: 'p-4', name: 'Player 4', isActive: true } },
+      ],
+    });
+    prisma.tournament.findUnique.mockResolvedValue({
+      id: 'tourney-1',
+      title: 'Arena Cup',
+      gameId: 'game-1',
+      status: TournamentStatus.LIVE,
+    });
+    prisma.gameProfile.count.mockResolvedValue(4);
+    prisma.tournamentRegistration.findFirst.mockResolvedValue(null);
+    prisma.teamMember.findFirst.mockResolvedValue(null);
+    prisma.team.findUnique.mockResolvedValue(null);
+    prisma.team.upsert.mockResolvedValue({ id: 'team-mgr-1' });
+    prisma.tournamentInvitation.createMany = jest.fn().mockResolvedValue({ count: 4 });
+    prisma.tournamentInvitation.findMany.mockResolvedValue([
+      { id: 'inv-1', squadId: 'squad-mgr', tournamentId: 'tourney-1', teamId: 'team-mgr-1', leaderId: 'mgr-1', inviteeUserId: 'p-1', status: 'PENDING', createdAt: new Date(), invitee: { id: 'p-1', name: 'Player 1' } },
+      { id: 'inv-2', squadId: 'squad-mgr', tournamentId: 'tourney-1', teamId: 'team-mgr-1', leaderId: 'mgr-1', inviteeUserId: 'p-2', status: 'PENDING', createdAt: new Date(), invitee: { id: 'p-2', name: 'Player 2' } },
+      { id: 'inv-3', squadId: 'squad-mgr', tournamentId: 'tourney-1', teamId: 'team-mgr-1', leaderId: 'mgr-1', inviteeUserId: 'p-3', status: 'PENDING', createdAt: new Date(), invitee: { id: 'p-3', name: 'Player 3' } },
+      { id: 'inv-4', squadId: 'squad-mgr', tournamentId: 'tourney-1', teamId: 'team-mgr-1', leaderId: 'mgr-1', inviteeUserId: 'p-4', status: 'PENDING', createdAt: new Date(), invitee: { id: 'p-4', name: 'Player 4' } },
+    ]);
+
+    const res = await service.inviteSquadToTournament('mgr-1', 'squad-mgr', 'tourney-1');
+
+    expect(prisma.team.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          ownerRole: 'MANAGER',
+          members: { create: { userId: 'mgr-1', role: 'MANAGER' } },
+        }),
+      }),
+    );
+    expect(prisma.tournamentInvitation.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({ inviteeUserId: 'p-1' }),
+        expect.objectContaining({ inviteeUserId: 'p-2' }),
+        expect.objectContaining({ inviteeUserId: 'p-3' }),
+        expect.objectContaining({ inviteeUserId: 'p-4' }),
+      ]),
+      skipDuplicates: true,
+    });
+    expect(res.invitations.length).toBe(4);
   });
 });

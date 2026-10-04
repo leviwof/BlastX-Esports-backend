@@ -424,6 +424,50 @@ describe('Teams & Tournaments Features', () => {
       );
     });
 
+    it('creates a Manager-owned team with MANAGER member role', async () => {
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        gameId: 'game-1',
+        status: TournamentStatus.UPCOMING,
+      });
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.gameProfile.findUnique.mockResolvedValue({ id: 'profile-1' });
+      mockPrisma.team.create.mockResolvedValue({
+        id: 'team-mgr',
+        gameId: 'game-1',
+        name: 'ManagerSquad',
+        tag: 'MGR',
+        logoUrl: null,
+        captainId: 'user-mgr',
+        ownerRole: 'MANAGER',
+        inviteCode: 'MGR12345',
+        acceptingSubstitutes: true,
+        createdAt: new Date(),
+        members: [{ userId: 'user-mgr', role: 'MANAGER' }],
+      });
+
+      const created = await tournamentsService.createTournamentTeam('user-mgr', 'tour-1', {
+        name: 'ManagerSquad',
+        tag: 'MGR',
+        owner_role: 'MANAGER' as any,
+      });
+
+      expect(mockPrisma.team.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            ownerRole: 'MANAGER',
+            members: {
+              create: {
+                userId: 'user-mgr',
+                role: 'MANAGER',
+              },
+            },
+          }),
+        }),
+      );
+      expect(created.owner_role).toBe('MANAGER');
+    });
+
     it('previewTeamByCode returns team preview and slot availability', async () => {
       mockPrisma.tournament.findUnique.mockResolvedValue({
         id: 'tour-1',

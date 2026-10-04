@@ -11,7 +11,7 @@ import {
   toTeamDetailResponse,
 } from './team.mapper';
 import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
-import { Prisma, TeamMemberRole, TeamMode, Team, TeamMember, User, GameProfile, RegistrationStatus } from '@prisma/client';
+import { Prisma, TeamMemberRole, TeamMode, Team, TeamMember, User, GameProfile, RegistrationStatus, OwnerRole } from '@prisma/client';
 import { randomBytes } from 'crypto';
 
 
@@ -64,6 +64,9 @@ export class TeamsService {
       inviteCode = this.generateInviteCode();
     }
 
+    const ownerRole = dto.owner_role || dto.ownerRole || OwnerRole.LEADER;
+    const initialRole = ownerRole === OwnerRole.MANAGER ? TeamMemberRole.MANAGER : TeamMemberRole.CAPTAIN;
+
     const team = await this.prisma.team.create({
       data: {
         gameId: game.id,
@@ -72,11 +75,12 @@ export class TeamsService {
         logoUrl: dto.logo_url,
         acceptingSubstitutes: dto.accepting_substitutes ?? true,
         captainId,
+        ownerRole,
         inviteCode,
         members: {
           create: {
             userId: captainId,
-            role: TeamMemberRole.CAPTAIN,
+            role: initialRole,
           },
         },
       },
@@ -220,7 +224,9 @@ export class TeamsService {
       dto.role === TeamMemberRole.SUBSTITUTE ||
       dto.rosterType?.toUpperCase() === 'SUBSTITUTE';
 
-    const mainPlayers = team.members.filter((m) => m.role !== TeamMemberRole.SUBSTITUTE);
+    const mainPlayers = team.members.filter(
+      (m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER,
+    );
     const existingSub = team.members.some((m) => m.role === TeamMemberRole.SUBSTITUTE);
 
     // If main roster is full, fallback to substitute if team accepts substitutes and has slot
@@ -359,8 +365,11 @@ export class TeamsService {
       throw new NotFoundException('Target user is not a member of this team');
     }
 
+    const newRoleForNewOwner =
+      team.ownerRole === OwnerRole.MANAGER ? TeamMemberRole.MANAGER : TeamMemberRole.CAPTAIN;
+
     await this.prisma.$transaction([
-      // Downgrade current captain to PLAYER
+      // Downgrade current captain/manager to PLAYER
       this.prisma.teamMember.update({
         where: {
           unique_team_user: {
@@ -370,7 +379,7 @@ export class TeamsService {
         },
         data: { role: TeamMemberRole.PLAYER },
       }),
-      // Upgrade target member to CAPTAIN
+      // Upgrade target member to CAPTAIN or MANAGER
       this.prisma.teamMember.update({
         where: {
           unique_team_user: {
@@ -378,7 +387,7 @@ export class TeamsService {
             userId: newCaptainId,
           },
         },
-        data: { role: TeamMemberRole.CAPTAIN },
+        data: { role: newRoleForNewOwner },
       }),
       // Update team captainId
       this.prisma.team.update({

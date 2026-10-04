@@ -28,6 +28,8 @@ export interface TeamResponse {
   tag: string;
   logo_url: string | null;
   captain_id: string;
+  owner_role?: string;
+  status?: string;
   invite_code: string;
   code?: string;
   tournament_id?: string | null;
@@ -43,6 +45,7 @@ export interface TeamSummaryResponse {
   tag: string;
   logo_url: string | null;
   game_slug: string;
+  owner_role?: string;
   captain: {
     id: string;
     name: string;
@@ -67,6 +70,7 @@ export interface TeamDetailResponse {
   tag: string;
   logo_url: string | null;
   game_slug: string;
+  owner_role?: string;
   accepting_substitutes: boolean;
   captain: {
     id: string;
@@ -112,21 +116,29 @@ export const toTeamMemberResponse = (
 };
 
 export const toTeamResponse = (
-  team: Team & { members?: (TeamMember & { user?: User & { gameProfiles?: GameProfile[] } })[] },
-): TeamResponse => ({
-  id: team.id,
-  game_id: team.gameId,
-  name: team.name,
-  tag: team.tag,
-  logo_url: team.logoUrl,
-  captain_id: team.captainId,
-  invite_code: team.inviteCode,
-  code: team.inviteCode,
-  tournament_id: team.tournamentId,
-  accepting_substitutes: team.acceptingSubstitutes ?? true,
-  created_at: team.createdAt,
-  ...(team.members ? { members: team.members.map((member) => toTeamMemberResponse(member, team.gameId)) } : {}),
-});
+  team: Team & { ownerRole?: string; members?: (TeamMember & { user?: User & { gameProfiles?: GameProfile[] } })[] },
+): TeamResponse => {
+  const mainPlayingMembers = team.members
+    ? team.members.filter((m) => m.role !== 'SUBSTITUTE' && m.role !== 'MANAGER')
+    : [];
+  const status = mainPlayingMembers.length >= 4 ? 'READY' : 'FORMING';
+  return {
+    id: team.id,
+    game_id: team.gameId,
+    name: team.name,
+    tag: team.tag,
+    logo_url: team.logoUrl,
+    captain_id: team.captainId,
+    owner_role: team.ownerRole ?? 'LEADER',
+    status,
+    invite_code: team.inviteCode,
+    code: team.inviteCode,
+    tournament_id: team.tournamentId,
+    accepting_substitutes: team.acceptingSubstitutes ?? true,
+    created_at: team.createdAt,
+    ...(team.members ? { members: team.members.map((member) => toTeamMemberResponse(member, team.gameId)) } : {}),
+  };
+};
 
 export const toTeamSummaryResponse = (
   team: Team & {

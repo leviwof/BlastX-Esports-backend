@@ -12,14 +12,21 @@ enum UserRole {
   ADMIN
 }
 
+enum OwnerRole {
+  LEADER
+  MANAGER
+}
+
 enum TeamMemberRole {
   CAPTAIN
+  MANAGER
   PLAYER
   SUBSTITUTE
 }
 
 enum SquadRole {
   LEADER
+  MANAGER
   MEMBER
 }
 
@@ -155,8 +162,9 @@ model Team {
   name                 String
   tag                  String
   logoUrl              String?  @map("logo_url")
-  captainId            String   @map("captain_id")
-  inviteCode           String   @unique @map("invite_code")
+  captainId            String    @map("captain_id")
+  ownerRole            OwnerRole @default(LEADER) @map("owner_role")
+  inviteCode           String    @unique @map("invite_code")
   acceptingSubstitutes Boolean  @default(true) @map("accepting_substitutes")
   createdAt            DateTime @default(now()) @map("created_at")
 
@@ -244,8 +252,9 @@ model Squad {
   name           String   @db.VarChar(50)
   tag            String   @default("") @db.VarChar(10)
   logoUrl        String?  @map("logo_url") @db.VarChar(255)
-  leaderId       String   @map("leader_id")
-  maxMainPlayers Int      @default(4) @map("max_main_players")
+  leaderId       String    @map("leader_id")
+  ownerRole      OwnerRole @default(LEADER) @map("owner_role")
+  maxMainPlayers Int       @default(4) @map("max_main_players")
   maxSubstitutes Int      @default(2) @map("max_substitutes")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")

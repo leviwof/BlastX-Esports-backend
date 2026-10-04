@@ -1,5 +1,6 @@
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, Length, Matches, MaxLength, ValidateIf, ValidateNested } from 'class-validator';
+import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString, Length, Matches, MaxLength, ValidateIf, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
+import { OwnerRole } from '@prisma/client';
 
 export class PlayerDetailsDto {
   @IsOptional()
@@ -40,6 +41,14 @@ export class CreateTournamentTeamDto {
   @IsOptional()
   @IsBoolean()
   accepting_substitutes?: boolean = true;
+
+  @IsOptional()
+  @IsEnum(OwnerRole)
+  owner_role?: OwnerRole;
+
+  @IsOptional()
+  @IsEnum(OwnerRole)
+  ownerRole?: OwnerRole;
 
   @IsOptional()
   @ValidateNested()

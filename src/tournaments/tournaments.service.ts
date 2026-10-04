@@ -22,6 +22,7 @@ import {
   SquadRole,
   SquadRosterType,
   User,
+  OwnerRole,
 } from '@prisma/client';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
@@ -432,7 +433,9 @@ export class TournamentsService {
         throw new BadRequestException('Only the team captain can register the team for a tournament');
       }
 
-      const mainMembers = team.members.filter((member) => member.role !== TeamMemberRole.SUBSTITUTE);
+      const mainMembers = team.members.filter(
+        (member) => member.role !== TeamMemberRole.SUBSTITUTE && member.role !== TeamMemberRole.MANAGER,
+      );
       participantUserIds = mainMembers.map((member) => member.userId);
 
       // Roster size validation
@@ -577,6 +580,7 @@ export class TournamentsService {
               where: { userId: { in: registeredMemberIds } },
             });
             if (existingMemberships === 0) {
+              const squadOwnerRole = registeredTeam.ownerRole ?? OwnerRole.LEADER;
               squad = await tx.squad.create({
                 data: {
                   gameId: registeredTeam.gameId,
@@ -584,12 +588,15 @@ export class TournamentsService {
                   tag: registeredTeam.tag,
                   logoUrl: registeredTeam.logoUrl,
                   leaderId: registeredTeam.captainId,
+                  ownerRole: squadOwnerRole,
                   members: {
                     create: registeredTeam.members.map((member) => ({
                       userId: member.userId,
                       role:
                         member.userId === registeredTeam.captainId
-                          ? SquadRole.LEADER
+                          ? (squadOwnerRole === OwnerRole.MANAGER ? SquadRole.MANAGER : SquadRole.LEADER)
+                          : member.role === TeamMemberRole.MANAGER
+                          ? SquadRole.MANAGER
                           : SquadRole.MEMBER,
                       rosterType:
                         member.role === TeamMemberRole.SUBSTITUTE
@@ -876,7 +883,9 @@ export class TournamentsService {
         registration_status: registration?.status ?? null,
         invitations,
         is_ready:
-          formingTeam.members.filter((member) => member.role !== TeamMemberRole.SUBSTITUTE).length === 4,
+          formingTeam.members.filter(
+            (member) => member.role !== TeamMemberRole.SUBSTITUTE && member.role !== TeamMemberRole.MANAGER,
+          ).length === 4,
       };
     }
 
@@ -956,7 +965,9 @@ export class TournamentsService {
       registration_status: registration.status,
       invitations: await this.getLobbyInvitations(registration.team.id),
       is_ready:
-        registration.team.members.filter((member) => member.role !== TeamMemberRole.SUBSTITUTE).length === 4,
+        registration.team.members.filter(
+          (member) => member.role !== TeamMemberRole.SUBSTITUTE && member.role !== TeamMemberRole.MANAGER,
+        ).length === 4,
     };
   }
 
@@ -1059,6 +1070,9 @@ export class TournamentsService {
       inviteCode = randomBytes(4).toString('hex').toUpperCase();
     }
 
+    const ownerRole = dto.owner_role || dto.ownerRole || OwnerRole.LEADER;
+    const initialRole = ownerRole === OwnerRole.MANAGER ? TeamMemberRole.MANAGER : TeamMemberRole.CAPTAIN;
+
     const team = await this.prisma.team.create({
       data: {
         gameId: tournament.gameId,
@@ -1068,11 +1082,12 @@ export class TournamentsService {
         logoUrl: sanitizedLogoUrl,
         acceptingSubstitutes: dto.accepting_substitutes ?? true,
         captainId: userId,
+        ownerRole,
         inviteCode,
         members: {
           create: {
             userId,
-            role: TeamMemberRole.CAPTAIN,
+            role: initialRole,
           },
         },
       },
@@ -1131,7 +1146,9 @@ export class TournamentsService {
       },
     });
 
-    const mainCount = team.members.filter((m) => m.role !== TeamMemberRole.SUBSTITUTE).length;
+    const mainCount = team.members.filter(
+      (m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER,
+    ).length;
     const subCount = team.members.filter((m) => m.role === TeamMemberRole.SUBSTITUTE).length;
     const maxMain = tournament.teamMode === TeamMode.DUO ? 2 : 4;
     const maxSub = 1;

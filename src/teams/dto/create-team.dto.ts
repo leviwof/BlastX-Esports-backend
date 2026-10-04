@@ -1,4 +1,5 @@
-import { IsNotEmpty, IsOptional, IsString, IsUrl, Matches, Length, IsBoolean } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsUrl, Matches, Length, IsBoolean, IsEnum } from 'class-validator';
+import { OwnerRole } from '@prisma/client';
 
 export class CreateTeamDto {
   @IsOptional()
@@ -23,4 +24,12 @@ export class CreateTeamDto {
   @IsOptional()
   @IsBoolean()
   accepting_substitutes?: boolean = true;
+
+  @IsOptional()
+  @IsEnum(OwnerRole)
+  owner_role?: OwnerRole;
+
+  @IsOptional()
+  @IsEnum(OwnerRole)
+  ownerRole?: OwnerRole;
 }

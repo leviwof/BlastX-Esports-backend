@@ -11,6 +11,7 @@ import {
   TeamMemberRole,
   TournamentInvitationStatus,
   TournamentStatus,
+  OwnerRole,
 } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -85,7 +86,7 @@ export class SquadsService {
     }
 
     const mainMembers = registration.team.members.filter(
-      (member) => member.role !== TeamMemberRole.SUBSTITUTE,
+      (member) => member.role !== TeamMemberRole.SUBSTITUTE && member.role !== TeamMemberRole.MANAGER,
     );
     if (mainMembers.length !== 4) {
       throw new BadRequestException('A persistent squad requires exactly four main players');
@@ -117,6 +118,7 @@ export class SquadsService {
       throw new BadRequestException('A registered player already belongs to another persistent squad');
     }
 
+    const squadOwnerRole = registration.team!.ownerRole ?? OwnerRole.LEADER;
     await this.prisma.$transaction(
       async (tx) => {
         const squad = await tx.squad.create({
@@ -126,10 +128,16 @@ export class SquadsService {
             tag: registration.team!.tag,
             logoUrl: registration.team!.logoUrl,
             leaderId: userId,
+            ownerRole: squadOwnerRole,
             members: {
               create: registration.team!.members.map((member) => ({
                 userId: member.userId,
-                role: member.userId === userId ? SquadRole.LEADER : SquadRole.MEMBER,
+                role:
+                  member.userId === userId
+                    ? (squadOwnerRole === OwnerRole.MANAGER ? SquadRole.MANAGER : SquadRole.LEADER)
+                    : member.role === TeamMemberRole.MANAGER
+                    ? SquadRole.MANAGER
+                    : SquadRole.MEMBER,
                 rosterType:
                   member.role === TeamMemberRole.SUBSTITUTE
                     ? SquadRosterType.SUBSTITUTE
@@ -216,13 +224,14 @@ export class SquadsService {
           data: { rosterType: SquadRosterType.MAIN },
         });
       }
+      const newOwnerRole = squad.ownerRole === OwnerRole.MANAGER ? SquadRole.MANAGER : SquadRole.LEADER;
       await tx.squadMember.update({
         where: { userId: leaderId },
         data: { role: SquadRole.MEMBER },
       });
       await tx.squadMember.update({
         where: { userId: dto.new_leader_id },
-        data: { role: SquadRole.LEADER },
+        data: { role: newOwnerRole },
       });
       await tx.squad.update({
         where: { id: squadId },
@@ -350,26 +359,38 @@ export class SquadsService {
     if (squad.gameId !== tournament.gameId) {
       throw new BadRequestException('Squad is configured for a different game');
     }
-    if (squad.members.length !== squad.maxMainPlayers) {
+    const squadOwnerRole = squad.ownerRole ?? OwnerRole.LEADER;
+    const mainPlayingSquadMembers = squad.members.filter(
+      (member) => member.role !== SquadRole.MANAGER,
+    );
+    if (mainPlayingSquadMembers.length !== squad.maxMainPlayers) {
       throw new BadRequestException(
         `A full main roster of ${squad.maxMainPlayers} players is required to invite a squad`,
       );
     }
 
-    const activeMemberIds = squad.members
+    const activeMainMemberIds = mainPlayingSquadMembers
       .filter((member) => member.user.isActive)
       .map((member) => member.userId);
-    const profileCount = activeMemberIds.length
+    const profileCount = activeMainMemberIds.length
       ? await this.prisma.gameProfile.count({
-          where: { gameId: squad.gameId, userId: { in: activeMemberIds } },
+          where: { gameId: squad.gameId, userId: { in: activeMainMemberIds } },
         })
       : 0;
-    if (profileCount !== activeMemberIds.length) {
+    if (profileCount !== activeMainMemberIds.length) {
       throw new BadRequestException('All active squad players need a game profile before they can be invited');
     }
-    const otherMembers = activeMemberIds.filter((id) => id !== leaderId);
-    if (otherMembers.length !== 3) {
-      throw new BadRequestException('Three active main players are required to send tournament invitations');
+
+    const otherMembers =
+      squadOwnerRole === OwnerRole.MANAGER
+        ? activeMainMemberIds
+        : activeMainMemberIds.filter((id) => id !== leaderId);
+
+    const expectedInviteCount = squadOwnerRole === OwnerRole.MANAGER ? 4 : 3;
+    if (otherMembers.length !== expectedInviteCount) {
+      throw new BadRequestException(
+        `${expectedInviteCount} active main players are required to send tournament invitations`,
+      );
     }
 
     const [existingRegistration, existingTeamMember] = await Promise.all([
@@ -400,6 +421,8 @@ export class SquadsService {
     while (await this.prisma.team.findUnique({ where: { inviteCode } })) {
       inviteCode = randomBytes(4).toString('hex').toUpperCase();
     }
+    const initialTeamRole =
+      squadOwnerRole === OwnerRole.MANAGER ? TeamMemberRole.MANAGER : TeamMemberRole.CAPTAIN;
     const team = await this.prisma.team.upsert({
       where: {
         unique_tournament_persistent_squad: { tournamentId, persistentSquadId: squadId },
@@ -413,9 +436,10 @@ export class SquadsService {
         tag: squad.tag,
         logoUrl: squad.logoUrl,
         captainId: leaderId,
+        ownerRole: squadOwnerRole,
         inviteCode,
         acceptingSubstitutes: true,
-        members: { create: { userId: leaderId, role: TeamMemberRole.CAPTAIN } },
+        members: { create: { userId: leaderId, role: initialTeamRole } },
       },
       select: { id: true },
     });
@@ -634,6 +658,7 @@ export class SquadsService {
     tag: string;
     logoUrl: string | null;
     leaderId: string;
+    ownerRole?: OwnerRole;
     maxMainPlayers: number;
     maxSubstitutes: number;
     game: { id: string; slug: string; name: string };
@@ -656,6 +681,7 @@ export class SquadsService {
       tag: squad.tag,
       logo_url: squad.logoUrl,
       leader_id: squad.leaderId,
+      owner_role: squad.ownerRole ?? OwnerRole.LEADER,
       game_slug: squad.game.slug,
       max_main_players: squad.maxMainPlayers,
       max_substitutes: squad.maxSubstitutes,
