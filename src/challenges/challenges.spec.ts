@@ -182,7 +182,7 @@ describe('ChallengesService', () => {
       const fakeFile: any = {
         originalname: 'recording_480p.mp4',
         mimetype: 'video/mp4',
-        buffer: Buffer.alloc(20 * 1024), // 20 KB valid test video
+        buffer: Buffer.alloc(200 * 1024), // 200 KB valid test video
       };
 
       const result = await service.submitProof('user_123', 'c1', fakeFile, '480p');
@@ -193,6 +193,45 @@ describe('ChallengesService', () => {
       expect(result.challenge_id).toBe('c1');
       expect(result.proof_url).toBeDefined();
       expect(mockPrisma.userChallenge.upsert).toHaveBeenCalled();
+    });
+
+    it('does not accept production proofs without durable storage configured', async () => {
+      const previousEnv = {
+        nodeEnv: process.env.NODE_ENV,
+        driveRefreshToken: process.env.GOOGLE_DRIVE_REFRESH_TOKEN,
+        supabaseUrl: process.env.SUPABASE_URL,
+        supabaseSecretKey: process.env.SUPABASE_SECRET_KEY,
+        supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      };
+      process.env.NODE_ENV = 'production';
+      delete process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
+      delete process.env.SUPABASE_URL;
+      delete process.env.SUPABASE_SECRET_KEY;
+      delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+      try {
+        const fakeFile: any = {
+          originalname: 'recording_480p.mp4',
+          mimetype: 'video/mp4',
+          buffer: Buffer.alloc(200 * 1024),
+        };
+
+        await expect(service.submitProof('user_123', 'c1', fakeFile)).rejects.toThrow(
+          'Proof video storage is not configured',
+        );
+        expect(mockPrisma.userChallenge.upsert).not.toHaveBeenCalled();
+      } finally {
+        if (previousEnv.nodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = previousEnv.nodeEnv;
+        if (previousEnv.driveRefreshToken === undefined) delete process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
+        else process.env.GOOGLE_DRIVE_REFRESH_TOKEN = previousEnv.driveRefreshToken;
+        if (previousEnv.supabaseUrl === undefined) delete process.env.SUPABASE_URL;
+        else process.env.SUPABASE_URL = previousEnv.supabaseUrl;
+        if (previousEnv.supabaseSecretKey === undefined) delete process.env.SUPABASE_SECRET_KEY;
+        else process.env.SUPABASE_SECRET_KEY = previousEnv.supabaseSecretKey;
+        if (previousEnv.supabaseServiceRoleKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+        else process.env.SUPABASE_SERVICE_ROLE_KEY = previousEnv.supabaseServiceRoleKey;
+      }
     });
   });
 });

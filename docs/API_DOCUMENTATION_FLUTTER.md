@@ -262,6 +262,12 @@ This document provides the complete API specification with exact Request paramet
 }
 ```
 
+Successful submissions are saved with status `PROOF_SUBMITTED` and appear in the admin
+portal's **Proof verification → Pending Review** queue. The backend must have a durable
+video-storage provider configured (Google Drive or Supabase Storage with an existing
+public `proofs` bucket); production uploads are rejected if durable storage is unavailable.
+The admin queue refreshes automatically while open.
+
 ---
 
 ## 4. Live Tournaments & Teams Section APIs

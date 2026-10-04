@@ -5,6 +5,8 @@ import {
   ConflictException,
   Logger,
   OnModuleInit,
+  ServiceUnavailableException,
+  BadGatewayException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma, ChallengeType, ChallengeStatus } from '@prisma/client';
@@ -283,8 +285,7 @@ export class ChallengesService implements OnModuleInit {
     const { mimeType: videoMime, ext } = this.resolveVideoType(file.buffer, file.originalname, file.mimetype);
 
     const uniqueFilename = `${challengeId}_${userId}_${Date.now()}.${ext}`;
-    const baseUrl = process.env.BASE_URL || 'https://blastx-esports-backend-production-4b5f.up.railway.app';
-    let proofUrl = `${baseUrl}/uploads/proofs/${uniqueFilename}`;
+    let proofUrl: string | null = null;
 
     // 1. Primary: Google Drive (15TB Cloud Storage)
     const gdriveUrl = await this.uploadToGoogleDrive(uniqueFilename, videoMime, file.buffer);
@@ -292,9 +293,10 @@ export class ChallengesService implements OnModuleInit {
       proofUrl = gdriveUrl;
     } else {
       // 2. Fallback: Supabase Storage bucket 'proofs'
-      const supabaseUrl = process.env.SUPABASE_URL;
-      const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
-      let uploadedToSupabase = false;
+      const supabaseUrl = process.env.SUPABASE_URL?.trim().replace(/\/+$/, '');
+      const supabaseKey =
+        process.env.SUPABASE_SECRET_KEY?.trim() ||
+        process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
       if (supabaseUrl && supabaseKey) {
         try {
@@ -310,16 +312,21 @@ export class ChallengesService implements OnModuleInit {
 
           if (uploadRes.ok) {
             proofUrl = `${supabaseUrl}/storage/v1/object/public/proofs/${uniqueFilename}`;
-            uploadedToSupabase = true;
             this.logger.log(`Video recording uploaded to Supabase Storage: ${proofUrl}`);
+          } else {
+            const responseBody = await uploadRes.text();
+            this.logger.error(
+              `Supabase Storage upload failed (${uploadRes.status}): ${responseBody}`,
+            );
           }
         } catch (uploadErr) {
           this.logger.warn(`Supabase Storage upload error: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
         }
       }
 
-      // 3. Fallback: Local disk (safe write)
-      if (!uploadedToSupabase) {
+      // Local disk is acceptable for development only; Railway's filesystem is
+      // ephemeral and must never be used for proofs that the admin must review.
+      if (!proofUrl && process.env.NODE_ENV !== 'production') {
         try {
           const uploadDir = path.join(process.cwd(), 'uploads', 'proofs');
           if (!fs.existsSync(uploadDir)) {
@@ -327,10 +334,28 @@ export class ChallengesService implements OnModuleInit {
           }
           const filePath = path.join(uploadDir, uniqueFilename);
           fs.writeFileSync(filePath, file.buffer);
+          const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+          proofUrl = `${baseUrl.replace(/\/+$/, '')}/uploads/proofs/${uniqueFilename}`;
         } catch (fsErr) {
-          this.logger.warn(`Could not save proof locally to disk: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`);
+          this.logger.error(`Could not save proof locally to disk: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`);
+          throw new BadGatewayException('Could not store the proof video. Please try again.');
         }
       }
+    }
+
+    if (!proofUrl) {
+      const storageConfigured =
+        Boolean(process.env.GOOGLE_DRIVE_REFRESH_TOKEN?.trim()) ||
+        Boolean(process.env.SUPABASE_URL?.trim() && (
+          process.env.SUPABASE_SECRET_KEY?.trim() ||
+          process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()
+        ));
+      if (!storageConfigured) {
+        throw new ServiceUnavailableException(
+          'Proof video storage is not configured. Please contact support.',
+        );
+      }
+      throw new BadGatewayException('Could not store the proof video. Please try again.');
     }
 
     // Update user challenge status to PROOF_SUBMITTED and mark completed for verification
@@ -710,7 +735,7 @@ export class ChallengesService implements OnModuleInit {
 
       // Make file readable so admin panel can preview it directly
       try {
-        await fetch(
+        const permissionRes = await fetch(
           `https://www.googleapis.com/drive/v3/files/${fileId}/permissions?supportsAllDrives=true`,
           {
             method: 'POST',
@@ -724,8 +749,14 @@ export class ChallengesService implements OnModuleInit {
             }),
           },
         );
+        if (!permissionRes.ok) {
+          const errText = await permissionRes.text();
+          throw new Error(`Permission update failed (${permissionRes.status}): ${errText}`);
+        }
       } catch (permErr) {
-        this.logger.warn(`Could not set public permission on Google Drive file: ${permErr}`);
+        throw new Error(
+          `Could not make proof video viewable: ${permErr instanceof Error ? permErr.message : String(permErr)}`,
+        );
       }
 
       const previewUrl = `https://drive.google.com/file/d/${fileId}/preview`;
@@ -739,6 +770,5 @@ export class ChallengesService implements OnModuleInit {
     }
   }
 }
-
 
 
