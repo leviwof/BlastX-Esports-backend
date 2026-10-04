@@ -24,6 +24,7 @@ import { ChallengesModule } from './challenges/challenges.module';
 import { AdminStatsModule } from './admin-stats/admin-stats.module';
 import { ContentModule } from './content/content.module';
 import { GamesModule } from './games/games.module';
+import { SquadsModule } from './squads/squads.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { GamesModule } from './games/games.module';
     AdminStatsModule,
     ContentModule,
     GamesModule,
+    SquadsModule,
     RealtimeModule,
     SchedulerModule,
     NotificationsModule,
@@ -62,4 +64,3 @@ import { GamesModule } from './games/games.module';
   ],
 })
 export class AppModule {}
-

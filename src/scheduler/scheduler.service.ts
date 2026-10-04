@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConfigService } from '@nestjs/config';
-import { MatchStatus, TournamentStatus } from '@prisma/client';
+import { MatchStatus, TournamentInvitationStatus, TournamentStatus } from '@prisma/client';
 import { Queue, Worker } from 'bullmq';
 import * as net from 'net';
 
@@ -118,6 +118,21 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     try {
       const now = new Date();
       const roomReleaseMinutes = Number(this.config.get<number>('ROOM_RELEASE_MINUTES') || 15);
+
+      const expiredInvitations = await this.prisma.tournamentInvitation.updateMany({
+        where: {
+          status: TournamentInvitationStatus.PENDING,
+          tournament: {
+            is: {
+              status: { not: TournamentStatus.LIVE },
+            },
+          },
+        },
+        data: { status: TournamentInvitationStatus.EXPIRED },
+      });
+      if (expiredInvitations.count > 0) {
+        this.logger.log(`[SCHEDULER] Expired ${expiredInvitations.count} closed tournament invitations`);
+      }
 
     // Legacy registrations are closed on their configured deadline. New
     // tournaments stay UPCOMING until startsAt and accept registrations only

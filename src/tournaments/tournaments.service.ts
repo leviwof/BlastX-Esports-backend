@@ -19,6 +19,8 @@ import {
   Team,
   TeamMember,
   TeamMemberRole,
+  SquadRole,
+  SquadRosterType,
   User,
 } from '@prisma/client';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
@@ -553,6 +555,67 @@ export class TournamentsService {
         },
       });
 
+      if (tournament.teamMode === TeamMode.SQUAD && teamId) {
+        const registeredTeam = await tx.team.findUnique({
+          where: { id: teamId },
+          include: { members: true },
+        });
+        if (registeredTeam && !registeredTeam.persistentSquadId) {
+          const registeredMemberIds = registeredTeam.members.map((member) => member.userId).sort();
+          let squad = await tx.squad.findUnique({
+            where: {
+              gameId_leaderId: {
+                gameId: registeredTeam.gameId,
+                leaderId: registeredTeam.captainId,
+              },
+            },
+            include: { members: { select: { userId: true } } },
+          });
+
+          if (!squad) {
+            const existingMemberships = await tx.squadMember.count({
+              where: { userId: { in: registeredMemberIds } },
+            });
+            if (existingMemberships === 0) {
+              squad = await tx.squad.create({
+                data: {
+                  gameId: registeredTeam.gameId,
+                  name: registeredTeam.name,
+                  tag: registeredTeam.tag,
+                  logoUrl: registeredTeam.logoUrl,
+                  leaderId: registeredTeam.captainId,
+                  members: {
+                    create: registeredTeam.members.map((member) => ({
+                      userId: member.userId,
+                      role:
+                        member.userId === registeredTeam.captainId
+                          ? SquadRole.LEADER
+                          : SquadRole.MEMBER,
+                      rosterType:
+                        member.role === TeamMemberRole.SUBSTITUTE
+                          ? SquadRosterType.SUBSTITUTE
+                          : SquadRosterType.MAIN,
+                    })),
+                  },
+                },
+                include: { members: { select: { userId: true } } },
+              });
+            }
+          }
+
+          if (
+            squad &&
+            squad.members.map((member) => member.userId).sort().join(',') ===
+              registeredMemberIds.join(',')
+          ) {
+            await tx.team.update({
+              where: { id: registeredTeam.id },
+              data: { persistentSquadId: squad.id },
+            });
+          }
+        }
+      }
+
       this.eventEmitter.emit('registration.confirmed', {
         userId,
         tournamentId,
@@ -804,12 +867,50 @@ export class TournamentsService {
           unique_tournament_team: { tournamentId, teamId: formingTeam.id },
         },
       });
+      const invitations = await this.getLobbyInvitations(formingTeam.id);
       return {
         ...toTeamResponse(formingTeam as any),
         tournament_id: tournamentId,
         is_registered: registration?.status === RegistrationStatus.CONFIRMED,
         slot_number: registration?.slotNumber ?? null,
         registration_status: registration?.status ?? null,
+        invitations,
+        is_ready:
+          formingTeam.members.filter((member) => member.role !== TeamMemberRole.SUBSTITUTE).length === 4,
+      };
+    }
+
+    const pendingInvitation = await this.prisma.tournamentInvitation.findFirst({
+      where: {
+        tournamentId,
+        inviteeUserId: userId,
+        status: 'PENDING',
+      },
+      include: {
+        team: {
+          include: {
+            captain: true,
+            members: {
+              include: { user: { include: { gameProfiles: true } } },
+            },
+          },
+        },
+      },
+    });
+    if (pendingInvitation) {
+      const invitations = await this.getLobbyInvitations(pendingInvitation.teamId);
+      return {
+        ...toTeamResponse(pendingInvitation.team as any),
+        tournament_id: tournamentId,
+        is_registered: false,
+        slot_number: null,
+        registration_status: null,
+        invitations,
+        my_invitation: {
+          id: pendingInvitation.id,
+          status: pendingInvitation.status,
+        },
+        is_ready: false,
       };
     }
 
@@ -853,7 +954,42 @@ export class TournamentsService {
       tournament_id: tournamentId,
       slot_number: registration.slotNumber,
       registration_status: registration.status,
+      invitations: await this.getLobbyInvitations(registration.team.id),
+      is_ready:
+        registration.team.members.filter((member) => member.role !== TeamMemberRole.SUBSTITUTE).length === 4,
     };
+  }
+
+  private async getLobbyInvitations(teamId: string) {
+    const invitations = await this.prisma.tournamentInvitation.findMany({
+      where: { teamId },
+      include: {
+        invitee: {
+          select: {
+            id: true,
+            name: true,
+            gameProfiles: { select: { gameId: true, inGameName: true, inGameUid: true } },
+          },
+        },
+        team: { select: { gameId: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    return invitations.map((invitation) => {
+      const profile = invitation.invitee.gameProfiles.find(
+        (gameProfile) => gameProfile.gameId === invitation.team.gameId,
+      );
+      return {
+        id: invitation.id,
+        user_id: invitation.invitee.id,
+        name: invitation.invitee.name,
+        ign: profile?.inGameName ?? null,
+        uid: profile?.inGameUid ?? null,
+        role: invitation.status === 'ACCEPTED' ? 'PLAYER' : 'INVITED',
+        roster_type: 'MAIN',
+        invitation_status: invitation.status,
+      };
+    });
   }
 
   async createTournamentTeam(userId: string, tournamentId: string, dto: CreateTournamentTeamDto) {

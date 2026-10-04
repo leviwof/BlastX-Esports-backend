@@ -152,6 +152,15 @@ Emails are normalised server-side (`trim` + lowercase), so send them as typed.
 | `PATCH` | `/v1/users/me` | `{ name?, phone?, profile_pic? }`; `phone` must be a 10-digit Indian mobile number starting with 6–9 (or `null` to clear it) |
 | `GET` | `/v1/users/me/game-profile?game_slug=free_fire` | In-game identity |
 | `PUT` | `/v1/users/me/game-profile` | `{ game_slug, in_game_uid, in_game_name }` — UID must be **8–12 digits** |
+| `GET` | `/v1/squads/me` | Current persistent squad and roster, or `{ squad: null }`; a 4-player SQUAD tournament roster is saved after successful registration |
+| `POST` | `/v1/squads` | Idempotently ensure/save the caller's most recent confirmed SQUAD tournament roster; source roster is read from the authenticated user's registration |
+| `POST` | `/v1/squads/:squadId/members/:userId` | Leader-only member removal |
+| `POST` | `/v1/squads/:squadId/transfer-leader` | Leader-only `{ new_leader_id }` |
+| `PATCH` | `/v1/squads/:squadId/members/:userId/role` | Leader-only `{ roster_type: "MAIN" | "SUBSTITUTE" }`; capacity 4/2 enforced |
+| `POST` | `/v1/squads/:squadId/swap` | Leader-only `{ main_user_id, sub_user_id }` |
+| `POST` | `/v1/squads/:squadId/tournaments/:tournamentId/invite` | Leader creates a tournament lobby and invites the other three active main players while tournament status is `LIVE` |
+| `GET` | `/v1/invitations/pending` | Current user's open tournament invites |
+| `POST` | `/v1/invitations/:invitationId/respond` | `{ action: "ACCEPT" | "REJECT" }`; rejection removes the member from the persistent squad |
 | `GET` | `/v1/tournaments/me` | My joined tournaments |
 | `GET` | `/v1/tournaments/:id/my-team` | User's forming or registered team lobby for this tournament (or `null`); includes `is_registered`, `slot_number`, and `registration_status` |
 | `POST` | `/v1/tournaments/:id/teams` | Create a tournament-scoped, forming team (`{ name, tag?, logo_url?, accepting_substitutes?, player?: { ign, uid } }`); `tag` may be omitted, empty, or `null`, otherwise it must be 2–5 alphanumeric characters. Does **not** register a tournament slot. Returns `{ status: "success", data }` and also includes the team fields at the top level for compatibility. |

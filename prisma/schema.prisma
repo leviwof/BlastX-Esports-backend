@@ -18,6 +18,23 @@ enum TeamMemberRole {
   SUBSTITUTE
 }
 
+enum SquadRole {
+  LEADER
+  MEMBER
+}
+
+enum SquadRosterType {
+  MAIN
+  SUBSTITUTE
+}
+
+enum TournamentInvitationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
 enum TournamentFormat {
   BATTLE_ROYALE
   CLASH_SQUAD
@@ -57,28 +74,32 @@ enum MatchStatus {
 }
 
 model User {
-  id         String   @id @default(cuid())
-  name       String
-  email      String   @unique
-  phone      String?  @db.Text
-  profilePic String?  @map("profile_pic")
-  googleId   String?  @unique @map("google_id")
-  role       UserRole @default(USER)
-  isActive   Boolean  @default(true) @map("is_active")
-  xp         Int      @default(0)
-  rank       Int      @default(1)
-  fcmToken   String?  @map("fcm_token") @db.Text
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  phone        String?   @db.Text
+  profilePic   String?   @map("profile_pic")
+  googleId     String?   @unique @map("google_id")
+  role         UserRole  @default(USER)
+  isActive     Boolean   @default(true) @map("is_active")
+  xp           Int       @default(0)
+  rank         Int       @default(1)
+  fcmToken     String?   @map("fcm_token") @db.Text
   fcmUpdatedAt DateTime? @map("fcm_updated_at") @db.Timestamp(3)
-  deviceType String?  @map("device_type")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  deviceType   String?   @map("device_type")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
 
-  gameProfiles           GameProfile[]
-  captainTeams           Team[]                   @relation("CaptainTeams")
-  teamMemberships        TeamMember[]
-  createdTournaments     Tournament[]             @relation("CreatedTournaments")
-  tournamentRegistrations TournamentRegistration[]
-  userChallenges         UserChallenge[]
+  gameProfiles              GameProfile[]
+  captainTeams              Team[]                   @relation("CaptainTeams")
+  teamMemberships           TeamMember[]
+  squadMemberships          SquadMember[]
+  ledSquads                 Squad[]                  @relation("SquadLeader")
+  sentTournamentInvites     TournamentInvitation[]   @relation("InvitationLeader")
+  receivedTournamentInvites TournamentInvitation[]   @relation("InvitationInvitee")
+  createdTournaments        Tournament[]             @relation("CreatedTournaments")
+  tournamentRegistrations   TournamentRegistration[]
+  userChallenges            UserChallenge[]
 
   @@index([fcmToken], map: "users_fcm_token_idx")
   @@map("users")
@@ -104,6 +125,7 @@ model Game {
   gameProfiles GameProfile[]
   teams        Team[]
   tournaments  Tournament[]
+  squads       Squad[]
 
   @@map("games")
 }
@@ -129,6 +151,7 @@ model Team {
   id                   String   @id @default(cuid())
   gameId               String   @map("game_id")
   tournamentId         String?  @map("tournament_id")
+  persistentSquadId    String?  @map("persistent_squad_id")
   name                 String
   tag                  String
   logoUrl              String?  @map("logo_url")
@@ -137,14 +160,18 @@ model Team {
   acceptingSubstitutes Boolean  @default(true) @map("accepting_substitutes")
   createdAt            DateTime @default(now()) @map("created_at")
 
-  game          Game                     @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  tournament    Tournament?              @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  captain       User                     @relation("CaptainTeams", fields: [captainId], references: [id], onDelete: Restrict)
-  members       TeamMember[]
-  registrations TournamentRegistration[]
+  game                  Game                     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  tournament            Tournament?              @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  persistentSquad       Squad?                   @relation(fields: [persistentSquadId], references: [id], onDelete: SetNull)
+  captain               User                     @relation("CaptainTeams", fields: [captainId], references: [id], onDelete: Restrict)
+  members               TeamMember[]
+  registrations         TournamentRegistration[]
+  tournamentInvitations TournamentInvitation[]
 
-  @@unique([gameId, name], name: "unique_game_team_name")
+  @@unique([gameId, tournamentId, name], name: "unique_game_tournament_team_name")
+  @@unique([tournamentId, persistentSquadId], name: "unique_tournament_persistent_squad")
   @@index([tournamentId])
+  @@index([persistentSquadId])
   @@map("teams")
 }
 
@@ -163,51 +190,114 @@ model TeamMember {
 }
 
 model Tournament {
-  id                   String           @id @default(cuid())
-  gameId               String           @map("game_id")
+  id                   String            @id @default(cuid())
+  gameId               String            @map("game_id")
   title                String
   description          String?
-  bannerUrl            String?          @map("banner_url")
+  bannerUrl            String?           @map("banner_url")
   format               TournamentFormat
-  teamMode             TeamMode         @map("team_mode")
+  teamMode             TeamMode          @map("team_mode")
   map                  String
-  maxSlots             Int              @map("max_slots")
-  registeredCount      Int              @default(0) @map("registered_count")
-  entryFee             Int              @default(0) @map("entry_fee")
-  prizePool            Int              @default(0) @map("prize_pool")
-  prizeDistribution    Json?            @map("prize_distribution")
+  maxSlots             Int               @map("max_slots")
+  registeredCount      Int               @default(0) @map("registered_count")
+  entryFee             Int               @default(0) @map("entry_fee")
+  prizePool            Int               @default(0) @map("prize_pool")
+  prizeDistribution    Json?             @map("prize_distribution")
   rules                Json?
-  registrationOpensAt  DateTime         @map("registration_opens_at")
-  registrationClosesAt DateTime         @map("registration_closes_at")
-  startsAt             DateTime         @map("starts_at")
-  status               TournamentStatus @default(DRAFT)
+  registrationOpensAt  DateTime          @map("registration_opens_at")
+  registrationClosesAt DateTime          @map("registration_closes_at")
+  startsAt             DateTime          @map("starts_at")
+  status               TournamentStatus  @default(DRAFT)
   section              TournamentSection @default(BLASTX)
-  streamUrl            String?          @map("stream_url")
-  viewersCount         Int              @default(0) @map("viewers_count")
-  organizerName        String?          @map("organizer_name")
-  organizerVerified    Boolean          @default(false) @map("organizer_verified")
-  accentColorHex       String?          @map("accent_color_hex")
-  perKillReward        Int              @default(0) @map("per_kill_reward")
-  booyahBonus          Int              @default(0) @map("booyah_bonus")
-  pointsSystem         Json?            @map("points_system")
+  streamUrl            String?           @map("stream_url")
+  viewersCount         Int               @default(0) @map("viewers_count")
+  organizerName        String?           @map("organizer_name")
+  organizerVerified    Boolean           @default(false) @map("organizer_verified")
+  accentColorHex       String?           @map("accent_color_hex")
+  perKillReward        Int               @default(0) @map("per_kill_reward")
+  booyahBonus          Int               @default(0) @map("booyah_bonus")
+  pointsSystem         Json?             @map("points_system")
   schedule             Json?
   announcements        Json?
-  roomId               String?          @map("room_id")
-  roomPassword         String?          @map("room_password")
-  roomReleasedAt       DateTime?        @map("room_released_at")
-  createdBy            String           @map("created_by")
-  createdAt            DateTime         @default(now()) @map("created_at")
-  updatedAt            DateTime         @updatedAt @map("updated_at")
+  roomId               String?           @map("room_id")
+  roomPassword         String?           @map("room_password")
+  roomReleasedAt       DateTime?         @map("room_released_at")
+  createdBy            String            @map("created_by")
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
 
-  game          Game                     @relation(fields: [gameId], references: [id], onDelete: Restrict)
-  creator       User                     @relation("CreatedTournaments", fields: [createdBy], references: [id], onDelete: Restrict)
-  teams         Team[]
-  registrations TournamentRegistration[]
-  matches       Match[]
+  game                  Game                     @relation(fields: [gameId], references: [id], onDelete: Restrict)
+  creator               User                     @relation("CreatedTournaments", fields: [createdBy], references: [id], onDelete: Restrict)
+  teams                 Team[]
+  registrations         TournamentRegistration[]
+  matches               Match[]
+  tournamentInvitations TournamentInvitation[]
 
   @@index([gameId, status, startsAt])
   @@index([section, status, startsAt])
   @@map("tournaments")
+}
+
+model Squad {
+  id             String   @id @default(cuid())
+  gameId         String   @map("game_id")
+  name           String   @db.VarChar(50)
+  tag            String   @default("") @db.VarChar(10)
+  logoUrl        String?  @map("logo_url") @db.VarChar(255)
+  leaderId       String   @map("leader_id")
+  maxMainPlayers Int      @default(4) @map("max_main_players")
+  maxSubstitutes Int      @default(2) @map("max_substitutes")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  game        Game                   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  leader      User                   @relation("SquadLeader", fields: [leaderId], references: [id], onDelete: Restrict)
+  members     SquadMember[]
+  teams       Team[]
+  invitations TournamentInvitation[]
+
+  @@unique([gameId, leaderId], map: "squads_game_leader_key")
+  @@index([leaderId])
+  @@map("squads")
+}
+
+model SquadMember {
+  id         String          @id @default(cuid())
+  squadId    String          @map("squad_id")
+  userId     String          @unique(map: "squad_members_user_id_key") @map("user_id")
+  role       SquadRole       @default(MEMBER)
+  rosterType SquadRosterType @default(MAIN) @map("roster_type")
+  joinedAt   DateTime        @default(now()) @map("joined_at")
+
+  squad Squad @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([squadId, userId], map: "squad_members_squad_user_key")
+  @@index([squadId, rosterType])
+  @@map("squad_members")
+}
+
+model TournamentInvitation {
+  id            String                     @id @default(cuid())
+  squadId       String                     @map("squad_id")
+  tournamentId  String                     @map("tournament_id")
+  teamId        String                     @map("team_id")
+  leaderId      String                     @map("leader_id")
+  inviteeUserId String                     @map("invitee_user_id")
+  status        TournamentInvitationStatus @default(PENDING)
+  createdAt     DateTime                   @default(now()) @map("created_at")
+  updatedAt     DateTime                   @updatedAt @map("updated_at")
+
+  squad      Squad      @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  team       Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  leader     User       @relation("InvitationLeader", fields: [leaderId], references: [id], onDelete: Cascade)
+  invitee    User       @relation("InvitationInvitee", fields: [inviteeUserId], references: [id], onDelete: Cascade)
+
+  @@unique([squadId, tournamentId, inviteeUserId], map: "tournament_invites_squad_tournament_user_key")
+  @@index([inviteeUserId, status, createdAt])
+  @@index([tournamentId, status])
+  @@map("tournament_invitations")
 }
 
 model TournamentRegistration {
@@ -220,9 +310,9 @@ model TournamentRegistration {
   finalRank    Int?               @map("final_rank")
   createdAt    DateTime           @default(now()) @map("created_at")
 
-  tournament   Tournament         @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  team         Team?              @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  tournament   Tournament    @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team         Team?         @relation(fields: [teamId], references: [id], onDelete: SetNull)
   matchResults MatchResult[]
 
   @@unique([tournamentId, userId], name: "unique_tournament_user")
@@ -231,19 +321,19 @@ model TournamentRegistration {
 }
 
 model Match {
-  id              String      @id @default(cuid())
-  tournamentId    String      @map("tournament_id")
-  matchNumber     Int         @map("match_number")
-  round           String      @default("Round 1") @map("round")
-  map             String
-  status          MatchStatus @default(SCHEDULED)
-  scheduledAt     DateTime    @map("scheduled_at")
-  reminderSentAt  DateTime?   @map("reminder_sent_at") @db.Timestamp(3)
-  endedAt         DateTime?   @map("ended_at")
-  streamUrl       String?     @map("stream_url")
-  winnerTeamName  String?     @map("winner_team_name")
-  topKillerName   String?     @map("top_killer_name")
-  createdAt       DateTime    @default(now()) @map("created_at")
+  id             String      @id @default(cuid())
+  tournamentId   String      @map("tournament_id")
+  matchNumber    Int         @map("match_number")
+  round          String      @default("Round 1") @map("round")
+  map            String
+  status         MatchStatus @default(SCHEDULED)
+  scheduledAt    DateTime    @map("scheduled_at")
+  reminderSentAt DateTime?   @map("reminder_sent_at") @db.Timestamp(3)
+  endedAt        DateTime?   @map("ended_at")
+  streamUrl      String?     @map("stream_url")
+  winnerTeamName String?     @map("winner_team_name")
+  topKillerName  String?     @map("top_killer_name")
+  createdAt      DateTime    @default(now()) @map("created_at")
 
   tournament Tournament    @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   results    MatchResult[]
@@ -286,20 +376,20 @@ enum ChallengeStatus {
 }
 
 model Challenge {
-  id                String          @id @default(cuid())
+  id                String        @id @default(cuid())
   title             String
   description       String
-  rewardXp          Int             @map("reward_xp")
-  targetProgress    Float           @default(1.0) @map("target_progress")
-  game              String          @default("Free Fire")
-  type              ChallengeType   @default(DAILY)
-  requiresRecording Boolean         @default(true) @map("requires_recording")
-  gamePackage       String          @default("com.dts.freefireth") @map("game_package")
-  iconAsset         String?         @map("icon_asset")
-  isActive          Boolean         @default(true) @map("is_active")
-  createdAt         DateTime        @default(now()) @map("created_at")
+  rewardXp          Int           @map("reward_xp")
+  targetProgress    Float         @default(1.0) @map("target_progress")
+  game              String        @default("Free Fire")
+  type              ChallengeType @default(DAILY)
+  requiresRecording Boolean       @default(true) @map("requires_recording")
+  gamePackage       String        @default("com.dts.freefireth") @map("game_package")
+  iconAsset         String?       @map("icon_asset")
+  isActive          Boolean       @default(true) @map("is_active")
+  createdAt         DateTime      @default(now()) @map("created_at")
 
-  userProgress      UserChallenge[]
+  userProgress UserChallenge[]
 
   @@map("challenges")
 }
@@ -321,8 +411,8 @@ model UserChallenge {
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
 
-  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  challenge       Challenge       @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
 
   @@unique([userId, challengeId], name: "unique_user_challenge")
   @@map("user_challenges")

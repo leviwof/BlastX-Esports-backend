@@ -13,6 +13,24 @@ export interface SquadRegisteredPayload {
   tournamentTitle: string;
 }
 
+export interface SquadInvitationReceivedPayload {
+  invitationId: string;
+  userId: string;
+  leaderName: string;
+  squadName: string;
+  tournamentId: string;
+  tournamentTitle: string;
+}
+
+export interface SquadInvitationRespondedPayload {
+  userId: string;
+  playerName: string;
+  squadId: string;
+  tournamentId: string;
+  tournamentTitle: string;
+  action: 'ACCEPT' | 'REJECT';
+}
+
 export interface RoomReleasedPayload {
   tournamentId: string;
   tournamentTitle: string;
@@ -146,6 +164,41 @@ export class NotificationsService implements OnModuleInit {
         type: 'tournament',
         tournamentId: payload.tournamentId,
         action: 'squad_complete',
+      },
+    );
+  }
+
+  @OnEvent('squad.invitation.received')
+  async handleSquadInvitationReceived(payload: SquadInvitationReceivedPayload): Promise<void> {
+    await this.sendEventToUsers(
+      [payload.userId],
+      {
+        title: `Tournament Invite from ${payload.leaderName}`,
+        body: `You have been invited to join ${payload.tournamentTitle} with ${payload.squadName}.`,
+      },
+      {
+        type: 'tournament',
+        tournamentId: payload.tournamentId,
+        invitationId: payload.invitationId,
+        action: 'tournament_invite',
+      },
+    );
+  }
+
+  @OnEvent('squad.invitation.responded')
+  async handleSquadInvitationResponded(payload: SquadInvitationRespondedPayload): Promise<void> {
+    const accepted = payload.action === 'ACCEPT';
+    await this.sendEventToUsers(
+      [payload.userId],
+      {
+        title: accepted ? 'Squad invite accepted' : 'Squad invite declined',
+        body: `${payload.playerName} ${accepted ? 'accepted' : 'declined'} your invitation to ${payload.tournamentTitle}.`,
+      },
+      {
+        type: 'tournament',
+        tournamentId: payload.tournamentId,
+        squadId: payload.squadId,
+        action: accepted ? 'invitation_accepted' : 'invitation_rejected',
       },
     );
   }

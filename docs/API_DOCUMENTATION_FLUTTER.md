@@ -135,6 +135,42 @@ This document provides the complete API specification with exact Request paramet
 
 ---
 
+## Persistent Squad APIs
+
+All squad and invitation routes require the authenticated user's bearer token.
+A four-main-player SQUAD tournament roster is saved as the player's persistent
+squad after successful tournament registration.
+
+- `GET /squads/me` returns `{ "squad": null }` when the user has no squad, or a
+  squad object with leader, roster limits, and members including each member's
+  game profile.
+- `POST /squads` idempotently ensures that the authenticated leader's most
+  recent confirmed SQUAD tournament roster is saved. The backend derives the
+  roster from the registration rather than trusting member IDs from the client.
+- `POST /squads/:squadId/members/:userId` removes a member (leader only).
+- `POST /squads/:squadId/transfer-leader` accepts `{ "new_leader_id": "..." }`.
+- `PATCH /squads/:squadId/members/:userId/role` accepts
+  `{ "roster_type": "MAIN" }` or `{ "roster_type": "SUBSTITUTE" }`.
+- `POST /squads/:squadId/swap` accepts
+  `{ "main_user_id": "...", "sub_user_id": "..." }`.
+- `POST /squads/:squadId/tournaments/:tournamentId/invite` creates or returns
+  the tournament lobby and sends invitations to the three other active main
+  players. Invites are only sent while the tournament status is `LIVE`.
+- `GET /invitations/pending` lists the authenticated player's pending invites.
+- `POST /invitations/:invitationId/respond` accepts
+  `{ "action": "ACCEPT" }` or `{ "action": "REJECT" }`. Acceptance adds the
+  player to the tournament lobby; rejection removes them from the persistent
+  squad. Invitees must explicitly accept before the leader can register the
+  four-player team.
+
+Only squad leaders may manage rosters or send invitations. Main roster capacity
+is four and substitute capacity is two. The lobby returned by
+`GET /tournaments/:id/my-team` includes `invitations`, `my_invitation`, and
+`is_ready` so the app can render invite states and enable registration only
+after all four main players are present.
+
+---
+
 ### 2.5 Get User's Registered Tournaments (Sync API)
 - **Method**: `GET`
 - **Endpoint**: `/tournaments/me`

@@ -32,6 +32,18 @@ describe('Teams & Tournaments Features', () => {
         findMany: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        upsert: jest.fn(),
+      },
+      squad: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn(),
+      },
+      squadMember: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+      tournamentInvitation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
       },
       teamMember: {
         findFirst: jest.fn(),
@@ -303,6 +315,16 @@ describe('Teams & Tournaments Features', () => {
         finalRank: null,
         createdAt: new Date(),
       });
+      mockPrisma.squad.create.mockResolvedValue({
+        id: 'squad-1',
+        members: [
+          { userId: 'user-cap' },
+          { userId: 'user-p2' },
+          { userId: 'user-p3' },
+          { userId: 'user-p4' },
+          { userId: 'user-sub' },
+        ],
+      });
 
       const registration = await tournamentsService.registerUserOrTeam(
         'user-cap',
@@ -316,6 +338,23 @@ describe('Teams & Tournaments Features', () => {
           gameId: 'game-1',
           userId: { in: ['user-cap', 'user-p2', 'user-p3', 'user-p4'] },
         },
+      });
+      expect(mockPrisma.squad.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            leaderId: 'user-cap',
+            members: expect.objectContaining({
+              create: expect.arrayContaining([
+                expect.objectContaining({ userId: 'user-cap', role: 'LEADER', rosterType: 'MAIN' }),
+                expect.objectContaining({ userId: 'user-sub', rosterType: 'SUBSTITUTE' }),
+              ]),
+            }),
+          }),
+        }),
+      );
+      expect(mockPrisma.team.update).toHaveBeenCalledWith({
+        where: { id: 'team-1' },
+        data: { persistentSquadId: 'squad-1' },
       });
     });
 
