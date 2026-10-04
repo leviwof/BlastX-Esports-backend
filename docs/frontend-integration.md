@@ -28,6 +28,7 @@ copy-paste API client.
    | `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` | yes | required for player email OTP sign-in |
    | `SMTP_USER` / `SMTP_PASS` | no | omit for unauthenticated relays |
    | `ADMIN_LOGIN_EMAIL` / `ADMIN_LOGIN_PASSWORD` | no | set both for admin-panel password login; password must be at least 16 characters |
+   | `FIREBASE_SERVICE_ACCOUNT_JSON` | no | Firebase Admin service-account JSON; keep it in Railway secrets, never commit the JSON key file |
    | `NODE_ENV` | no | set `production` |
    | `JWT_EXPIRES_IN` | no | default `30d` |
    | `PAID_TOURNAMENTS_ENABLED` | no | default `false` |
@@ -106,6 +107,17 @@ Other auth routes:
 |---|---|---|
 | `POST /v1/auth/social-login` | `{ token }` (Google **ID token**) | Sign in with Google |
 | `POST /v1/auth/verify-token` | `{ token }` (your JWT) | Validate a stored session on app start → `{ valid: true }` |
+| `POST /v1/admin/notifications/broadcast` | `{ title, body }` | Admin-only push broadcast; returns targeted/sent/failed device counts |
+
+Register/refresh an app device's push token after login and when FCM rotates it:
+
+```text
+POST /v1/user/fcm-token { fcm_token, device_type? } -> { status: true, message }
+```
+
+`device_type` is `android` or `ios`. Tokens are stored on the authenticated user. Configure
+`FIREBASE_SERVICE_ACCOUNT_JSON` in Railway with the Firebase service-account JSON value to
+enable delivery. Do not commit the service-account file or expose its private key to the app.
 
 **OTP limits** (server-enforced):
 

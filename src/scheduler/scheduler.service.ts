@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConfigService } from '@nestjs/config';
-import { TournamentStatus } from '@prisma/client';
+import { MatchStatus, TournamentStatus } from '@prisma/client';
 import { Queue, Worker } from 'bullmq';
 import * as net from 'net';
 
@@ -146,7 +146,14 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     const releaseTimeWindow = new Date(now.getTime() + roomReleaseMinutes * 60 * 1000);
     const toReleaseRoom = await this.prisma.tournament.findMany({
       where: {
-        status: { in: [TournamentStatus.REGISTRATION_CLOSED, TournamentStatus.LIVE] },
+        status: {
+          in: [
+            TournamentStatus.UPCOMING,
+            TournamentStatus.REGISTRATION_OPEN,
+            TournamentStatus.REGISTRATION_CLOSED,
+            TournamentStatus.LIVE,
+          ],
+        },
         roomId: { not: null },
         roomReleasedAt: null,
         startsAt: { lte: releaseTimeWindow },
@@ -154,16 +161,45 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     });
 
     for (const t of toReleaseRoom) {
-      await this.prisma.tournament.update({
-        where: { id: t.id },
+      const claimed = await this.prisma.tournament.updateMany({
+        where: { id: t.id, roomReleasedAt: null },
         data: { roomReleasedAt: now },
       });
+      if (claimed.count === 0) continue;
       this.logger.log(`[SCHEDULER] Auto-released room credentials for tournament "${t.title}"`);
       this.eventEmitter.emit('room.released', {
         tournamentId: t.id,
         tournamentTitle: t.title,
-        roomId: t.roomId,
-        roomPassword: t.roomPassword,
+      });
+    }
+
+    const reminderWindowStart = new Date(now.getTime() + 14 * 60 * 1000);
+    const reminderWindowEnd = new Date(now.getTime() + 15 * 60 * 1000);
+    const upcomingMatches = await this.prisma.match.findMany({
+      where: {
+        status: MatchStatus.SCHEDULED,
+        reminderSentAt: null,
+        scheduledAt: { gt: reminderWindowStart, lte: reminderWindowEnd },
+      },
+      include: { tournament: { select: { id: true, title: true } } },
+    });
+
+    for (const match of upcomingMatches) {
+      const claimed = await this.prisma.match.updateMany({
+        where: {
+          id: match.id,
+          status: MatchStatus.SCHEDULED,
+          reminderSentAt: null,
+        },
+        data: { reminderSentAt: now },
+      });
+      if (claimed.count === 0) continue;
+
+      this.eventEmitter.emit('match.starting_soon', {
+        matchId: match.id,
+        tournamentId: match.tournament.id,
+        tournamentTitle: match.tournament.title,
+        startsAt: match.scheduledAt,
       });
     }
 

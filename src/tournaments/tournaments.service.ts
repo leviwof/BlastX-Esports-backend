@@ -149,6 +149,17 @@ export class TournamentsService {
       oldStatus: tournament.status,
       newStatus,
     });
+    if (
+      tournament.status === TournamentStatus.DRAFT &&
+      (newStatus === TournamentStatus.UPCOMING || newStatus === TournamentStatus.REGISTRATION_OPEN)
+    ) {
+      this.eventEmitter.emit('tournament.published', {
+        tournamentId,
+        tournamentTitle: updated.title,
+        prizePool: updated.prizePool,
+        entryFee: updated.entryFee,
+      });
+    }
 
     return updated;
   }
@@ -175,8 +186,6 @@ export class TournamentsService {
       this.eventEmitter.emit('room.released', {
         tournamentId,
         tournamentTitle: tournament.title,
-        roomId: dto.room_id,
-        roomPassword,
       });
     }
 
@@ -384,6 +393,7 @@ export class TournamentsService {
 
     let teamId: string | null = null;
     let participantUserIds: string[] = [];
+    let registeredSquadName: string | null = null;
 
     if (tournament.teamMode === TeamMode.SOLO) {
       // SOLO mode
@@ -436,6 +446,7 @@ export class TournamentsService {
             message: 'Tournament registration requires exactly 4 main players in your team.',
           });
         }
+        registeredSquadName = team.name;
       }
 
       // Check EVERY member has a Free Fire game profile
@@ -499,7 +510,7 @@ export class TournamentsService {
     }
 
     // RACE-SAFE TRANSACTION: Atomic conditional slot increment
-    return this.prisma.$transaction(async (tx) => {
+    const registration = await this.prisma.$transaction(async (tx) => {
       // Atomic increment conditional on registeredCount < maxSlots
       const updateResult = await tx.tournament.updateMany({
         where: {
@@ -551,6 +562,17 @@ export class TournamentsService {
 
       return registration;
     });
+
+    if (registeredSquadName && teamId) {
+      this.eventEmitter.emit('squad.registered', {
+        captainUserId: userId,
+        teamName: registeredSquadName,
+        tournamentId,
+        tournamentTitle: tournament.title,
+      });
+    }
+
+    return registration;
   }
 
   async unregisterUserOrTeam(userId: string, tournamentId: string): Promise<{ message: string }> {

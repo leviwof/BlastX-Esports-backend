@@ -66,6 +66,9 @@ model User {
   isActive   Boolean  @default(true) @map("is_active")
   xp         Int      @default(0)
   rank       Int      @default(1)
+  fcmToken   String?  @map("fcm_token") @db.Text
+  fcmUpdatedAt DateTime? @map("fcm_updated_at") @db.Timestamp(3)
+  deviceType String?  @map("device_type")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
@@ -76,6 +79,7 @@ model User {
   tournamentRegistrations TournamentRegistration[]
   userChallenges         UserChallenge[]
 
+  @@index([fcmToken], map: "users_fcm_token_idx")
   @@map("users")
 }
 
@@ -233,6 +237,7 @@ model Match {
   map             String
   status          MatchStatus @default(SCHEDULED)
   scheduledAt     DateTime    @map("scheduled_at")
+  reminderSentAt  DateTime?   @map("reminder_sent_at") @db.Timestamp(3)
   endedAt         DateTime?   @map("ended_at")
   streamUrl       String?     @map("stream_url")
   winnerTeamName  String?     @map("winner_team_name")
@@ -243,6 +248,7 @@ model Match {
   results    MatchResult[]
 
   @@unique([tournamentId, matchNumber], name: "unique_tournament_match_number")
+  @@index([status, scheduledAt, reminderSentAt], map: "matches_scheduled_reminder_idx")
   @@map("matches")
 }
 

@@ -268,6 +268,25 @@ video-storage provider configured (Google Drive or Supabase Storage with an exis
 public `proofs` bucket); production uploads are rejected if durable storage is unavailable.
 The admin queue refreshes automatically while open.
 
+### 3.4 Register the FCM Device Token
+- **Method**: `POST`
+- **Endpoint**: `/user/fcm-token`
+- **Auth**: `Authorization: Bearer <JWT_TOKEN>`
+- **Content-Type**: `application/json`
+- **Request Body**:
+```json
+{
+  "fcm_token": "sample_fcm_token_string_from_flutter_app",
+  "device_type": "android"
+}
+```
+- Call after login and whenever Firebase rotates the device token.
+- `device_type` is optional and accepts `android` or `ios`.
+- The endpoint is hosted under the backend's `/v1` prefix; this repo does not use an `/api` prefix.
+- **Success**: `{ "status": true, "message": "FCM Token updated successfully" }` inside the standard API response envelope.
+- Tournament room push alerts intentionally contain no room password. After the alert, fetch
+  `GET /v1/tournaments/:id/room` with the signed-in user's token to retrieve credentials.
+
 ---
 
 ## 4. Live Tournaments & Teams Section APIs
