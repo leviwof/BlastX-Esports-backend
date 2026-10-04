@@ -149,7 +149,7 @@ Emails are normalised server-side (`trim` + lowercase), so send them as typed.
 | Method | Path | Body / notes |
 |---|---|---|
 | `GET` | `/v1/users/me` | Current profile |
-| `PATCH` | `/v1/users/me` | `{ name?, profile_pic? }` (`profile_pic` must be a URL) |
+| `PATCH` | `/v1/users/me` | `{ name?, phone?, profile_pic? }`; `phone` must be a 10-digit Indian mobile number starting with 6–9 (or `null` to clear it) |
 | `GET` | `/v1/users/me/game-profile?game_slug=free_fire` | In-game identity |
 | `PUT` | `/v1/users/me/game-profile` | `{ game_slug, in_game_uid, in_game_name }` — UID must be **8–12 digits** |
 | `GET` | `/v1/tournaments/me` | My joined tournaments |
@@ -268,6 +268,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  phone: string | null;
   profile_pic: string | null;
   role: 'USER' | 'ADMIN';
   is_active: boolean;
@@ -391,7 +392,7 @@ export const api = {
 
   users: {
     me: () => request<User>('/users/me'),
-    updateMe: (patch: { name?: string; profile_pic?: string }) =>
+    updateMe: (patch: { name?: string; phone?: string | null; profile_pic?: string }) =>
       request<User>('/users/me', { method: 'PATCH', body: JSON.stringify(patch) }),
     gameProfile: (gameSlug = 'free_fire') =>
       request<unknown>(`/users/me/game-profile?game_slug=${encodeURIComponent(gameSlug)}`),

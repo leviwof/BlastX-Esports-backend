@@ -133,6 +133,9 @@ export class UsersService {
     if (dto.name !== undefined) {
       data.name = dto.name.trim();
     }
+    if (dto.phone !== undefined) {
+      data.phone = dto.phone === null ? null : dto.phone.trim();
+    }
     const pic = dto.profile_pic !== undefined ? dto.profile_pic : dto.profilePic;
     if (pic !== undefined) {
       data.profilePic = pic && pic.trim() ? pic.trim() : null;
@@ -319,5 +322,4 @@ export class UsersService {
     };
   }
 }
-
 

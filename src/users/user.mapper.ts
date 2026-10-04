@@ -22,6 +22,7 @@ export interface UserResponse {
   id: string;
   name: string;
   email: string;
+  phone: string | null;
   profile_pic: string | null;
   role: string;
   is_active: boolean;
@@ -57,6 +58,7 @@ export const toUserResponse = (
   id: user.id,
   name: user.name,
   email: user.email,
+  phone: user.phone,
   profile_pic: user.profilePic,
   role: user.role === 'USER' ? 'PLAYER' : user.role,
   is_active: user.isActive,
@@ -111,4 +113,3 @@ export const toAdminUserResponse = (user: User): AdminUserResponse => ({
   created_at: user.createdAt,
   updated_at: user.updatedAt,
 });
-

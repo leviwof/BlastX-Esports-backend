@@ -39,6 +39,7 @@ This document provides the complete API specification with exact Request paramet
     "id": "cuid_user_123",
     "name": "Alex Mercer",
     "email": "alex.mercer@gmail.com",
+    "phone": "9876543210",
     "profile_pic": "https://storage.blastx.com/profiles/user_123.jpg",
     "role": "PLAYER",
     "is_active": true,
@@ -70,9 +71,11 @@ This document provides the complete API specification with exact Request paramet
 ```json
 {
   "name": "Alex 'Sniper' Mercer",
+  "phone": "9876543210",
   "profile_pic": "https://storage.blastx.com/profiles/avatar_new.jpg"
 }
 ```
+- `phone` is optional; when supplied, it must be a 10-digit Indian mobile number beginning with 6, 7, 8, or 9. Send `null` to clear it.
 - **Response `200 OK`**: Returns the updated user profile object with fresh statistics.
 
 ---
