@@ -279,13 +279,20 @@ export class TeamsService {
       }
     }
 
-    await this.prisma.teamMember.create({
-      data: {
-        teamId: team.id,
-        userId,
-        role: targetRole,
-      },
-    });
+    try {
+      await this.prisma.teamMember.create({
+        data: {
+          teamId: team.id,
+          userId,
+          role: targetRole,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new BadRequestException('You are already a member of this team');
+      }
+      throw error;
+    }
 
     return this.getTeamById(team.id);
   }

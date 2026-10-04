@@ -633,13 +633,27 @@ export class TournamentsService {
       return registration;
     });
 
-    if (registeredSquadName && teamId) {
-      this.eventEmitter.emit('squad.registered', {
-        captainUserId: userId,
-        teamName: registeredSquadName,
-        tournamentId,
-        tournamentTitle: tournament.title,
+    if (teamId) {
+      const registeredTeam = await this.prisma.team.findUnique({
+        where: { id: teamId },
+        select: {
+          name: true,
+          captainId: true,
+          captain: { select: { name: true } },
+          members: { select: { userId: true } },
+        },
       });
+
+      if (registeredTeam) {
+        this.eventEmitter.emit('squad.registered', {
+          captainUserId: userId,
+          captainName: registeredTeam.captain?.name || 'Your leader',
+          teamName: registeredTeam.name,
+          tournamentId,
+          tournamentTitle: tournament.title,
+          memberUserIds: registeredTeam.members.map((m) => m.userId),
+        });
+      }
     }
 
     return registration;

@@ -35,45 +35,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private async tryConnect(): Promise<void> {
     try {
       await this.$connect();
-      await this.$executeRawUnsafe(
-        'ALTER TABLE "teams" ADD COLUMN IF NOT EXISTS "accepting_substitutes" BOOLEAN NOT NULL DEFAULT true;',
-      ).catch(() => {});
-      // Keep a newly deployed Prisma client compatible with databases where the
-      // tracked migration has not yet been run. These must be separate calls:
-      // PostgreSQL's prepared-statement protocol rejects multiple commands in
-      // one raw query, which previously hid this repair behind the catch below.
-      await this.$executeRawUnsafe(`
-        DO $$ BEGIN
-          CREATE TYPE "TournamentSection" AS ENUM ('FREEFIRE_LIVE', 'BLASTX');
-        EXCEPTION
-          WHEN duplicate_object THEN NULL;
-        END $$;
-      `);
-      await this.$executeRawUnsafe(
-        'ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "section" "TournamentSection" NOT NULL DEFAULT \'BLASTX\';',
-      );
-      await this.$executeRawUnsafe(`
-        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "stream_url" TEXT;
-        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "viewers_count" INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "organizer_name" TEXT;
-        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "organizer_verified" BOOLEAN NOT NULL DEFAULT false;
-        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "accent_color_hex" TEXT;
-        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "per_kill_reward" INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "booyah_bonus" INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "points_system" JSONB;
-        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "schedule" JSONB;
-        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "announcements" JSONB;
-        ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "round" TEXT NOT NULL DEFAULT 'Round 1';
-        ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "ended_at" TIMESTAMP(3);
-        ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "stream_url" TEXT;
-        ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "winner_team_name" TEXT;
-        ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "top_killer_name" TEXT;
-      `).catch(() => {});
       if (!this.connected) this.logger.log('Database connection established');
       this.connected = true;
       this.lastFailure = null;
       healthStatus.db = true;
       healthStatus.dbError = null;
+
+      // Run DDL compatibility checks asynchronously in the background so API startup is not delayed
+      void this.ensureSchemaCompatibility().catch((err) => {
+        this.logger.warn(`Schema compatibility check warning: ${err instanceof Error ? err.message : String(err)}`);
+      });
     } catch (err) {
       this.connected = false;
       this.lastFailure = err instanceof Error ? err.message : String(err);
@@ -81,6 +52,39 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       healthStatus.dbError = this.lastFailure;
       this.logger.error(`Database connection failed: ${this.lastFailure}`);
     }
+  }
+
+  private async ensureSchemaCompatibility(): Promise<void> {
+    await this.$executeRawUnsafe(
+      'ALTER TABLE "teams" ADD COLUMN IF NOT EXISTS "accepting_substitutes" BOOLEAN NOT NULL DEFAULT true;',
+    ).catch(() => {});
+    await this.$executeRawUnsafe(`
+      DO $$ BEGIN
+        CREATE TYPE "TournamentSection" AS ENUM ('FREEFIRE_LIVE', 'BLASTX');
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END $$;
+    `).catch(() => {});
+    await this.$executeRawUnsafe(
+      'ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "section" "TournamentSection" NOT NULL DEFAULT \'BLASTX\';',
+    ).catch(() => {});
+    await this.$executeRawUnsafe(`
+      ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "stream_url" TEXT;
+      ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "viewers_count" INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "organizer_name" TEXT;
+      ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "organizer_verified" BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "accent_color_hex" TEXT;
+      ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "per_kill_reward" INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "booyah_bonus" INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "points_system" JSONB;
+      ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "schedule" JSONB;
+      ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "announcements" JSONB;
+      ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "round" TEXT NOT NULL DEFAULT 'Round 1';
+      ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "ended_at" TIMESTAMP(3);
+      ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "stream_url" TEXT;
+      ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "winner_team_name" TEXT;
+      ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "top_killer_name" TEXT;
+    `).catch(() => {});
   }
 
   /** Keep retrying until the database answers, then stop the timer. */

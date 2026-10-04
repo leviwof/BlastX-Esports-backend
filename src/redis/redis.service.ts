@@ -11,9 +11,13 @@ export class RedisService implements OnModuleDestroy {
 
   constructor(config: ConfigService) {
     this.client = new Redis(config.getOrThrow<string>('REDIS_URL'), {
-      maxRetriesPerRequest: 2,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 1500,
+      commandTimeout: 1500,
+      enableOfflineQueue: false,
       retryStrategy(times) {
-        return Math.min(times * 2000, 10000);
+        if (times > 3) return null;
+        return Math.min(times * 500, 2000);
       },
     });
 

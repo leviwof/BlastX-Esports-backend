@@ -180,6 +180,8 @@ model Team {
   @@unique([tournamentId, persistentSquadId], name: "unique_tournament_persistent_squad")
   @@index([tournamentId])
   @@index([persistentSquadId])
+  @@index([captainId])
+  @@index([gameId])
   @@map("teams")
 }
 
@@ -194,6 +196,7 @@ model TeamMember {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, userId], name: "unique_team_user")
+  @@index([userId])
   @@map("team_members")
 }
 
@@ -326,6 +329,8 @@ model TournamentRegistration {
 
   @@unique([tournamentId, userId], name: "unique_tournament_user")
   @@unique([tournamentId, teamId], name: "unique_tournament_team")
+  @@index([userId])
+  @@index([teamId])
   @@map("tournament_registrations")
 }
 
@@ -348,6 +353,7 @@ model Match {
   results    MatchResult[]
 
   @@unique([tournamentId, matchNumber], name: "unique_tournament_match_number")
+  @@index([tournamentId])
   @@index([status, scheduledAt, reminderSentAt], map: "matches_scheduled_reminder_idx")
   @@map("matches")
 }
@@ -367,6 +373,7 @@ model MatchResult {
   registration TournamentRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
 
   @@unique([matchId, registrationId], name: "unique_match_registration")
+  @@index([registrationId])
   @@map("match_results")
 }
 

@@ -8,9 +8,11 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export interface SquadRegisteredPayload {
   captainUserId: string;
+  captainName?: string;
   teamName: string;
   tournamentId: string;
   tournamentTitle: string;
+  memberUserIds?: string[];
 }
 
 export interface SquadInvitationReceivedPayload {
@@ -154,11 +156,12 @@ export class NotificationsService implements OnModuleInit {
 
   @OnEvent('squad.registered')
   async handleSquadRegistered(payload: SquadRegisteredPayload): Promise<void> {
+    // 1. Notify Captain
     await this.sendEventToUsers(
       [payload.captainUserId],
       {
         title: '🛡️ Squad Registration Complete!',
-        body: `Booyah! Your squad "${payload.teamName}" is 4/4 complete and registered for ${payload.tournamentTitle}.`,
+        body: `Booyah! Your squad "${payload.teamName}" is registered for ${payload.tournamentTitle}.`,
       },
       {
         type: 'tournament',
@@ -166,6 +169,26 @@ export class NotificationsService implements OnModuleInit {
         action: 'squad_complete',
       },
     );
+
+    // 2. Notify all other team members about captain's registration
+    if (payload.memberUserIds && payload.memberUserIds.length > 0) {
+      const otherMemberIds = payload.memberUserIds.filter((id) => id !== payload.captainUserId);
+      if (otherMemberIds.length > 0) {
+        const leaderName = payload.captainName || 'Your team captain';
+        await this.sendEventToUsers(
+          otherMemberIds,
+          {
+            title: '🎮 Registered for Tournament!',
+            body: `${leaderName} has registered your team "${payload.teamName}" for ${payload.tournamentTitle}.`,
+          },
+          {
+            type: 'tournament',
+            tournamentId: payload.tournamentId,
+            action: 'squad_registered_by_leader',
+          },
+        );
+      }
+    }
   }
 
   @OnEvent('squad.invitation.received')
