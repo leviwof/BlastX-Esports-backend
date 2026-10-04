@@ -25,8 +25,9 @@ copy-paste API client.
    | `JWT_SECRET` | yes | min 32 chars |
    | `OTP_PEPPER` | yes | min 16 chars, keep stable |
    | `GOOGLE_CLIENT_IDS` | yes | comma-separated; Google ID token audiences |
-   | `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` | yes | **login is OTP-by-email, so without SMTP nobody can sign in** |
+   | `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` | yes | required for player email OTP sign-in |
    | `SMTP_USER` / `SMTP_PASS` | no | omit for unauthenticated relays |
+   | `ADMIN_LOGIN_EMAIL` / `ADMIN_LOGIN_PASSWORD` | no | set both for admin-panel password login; password must be at least 16 characters |
    | `NODE_ENV` | no | set `production` |
    | `JWT_EXPIRES_IN` | no | default `30d` |
    | `PAID_TOURNAMENTS_ENABLED` | no | default `false` |
@@ -60,15 +61,22 @@ sending an extra/unknown key in a body or query returns
 
 ---
 
-## 3. Auth: passwordless email OTP
+## 3. Auth: email OTP and admin password login
 
-There is no password anywhere. Flow:
+Player account authentication continues to use email OTP. The admin panel has a separate
+password endpoint, enabled only when both `ADMIN_LOGIN_EMAIL` and `ADMIN_LOGIN_PASSWORD`
+are configured on the backend:
 
 ```text
 POST /v1/auth/send-otp   { email }            -> { sent: true }        (email gets a 6-digit code)
 POST /v1/auth/register   { name, email, otp } -> user + token          (new account)
 POST /v1/auth/login      { email, otp }       -> user + token          (existing account)
+POST /v1/auth/admin-login { email, password } -> admin user + token    (admin panel only)
 ```
+
+The configured email must belong to an active `ADMIN` user. Admin password login is
+rate-limited to 5 attempts per minute. Never put the password in frontend environment
+variables or source control.
 
 The `token` is returned **inside `data`** on register/login:
 
@@ -430,7 +438,8 @@ try {
 6. **Room credentials are gated.** `/tournaments/:id/room` errors before the release window — treat
    it as "not yet available", not a bug.
 7. **429s are normal.** OTP and login limits are intentional; show "try again in a few minutes".
-8. **Seeded admin** is `admin@blastixesports.com` (OTP login, no password) — change the email or the
-   role in the DB before going live.
+8. **Seeded admin** is `admin@blastixesports.com`. Set `ADMIN_LOGIN_EMAIL` to this address and
+   set a unique `ADMIN_LOGIN_PASSWORD` secret (minimum 16 characters) in Railway. Admin password
+   login is disabled until both variables are configured. Player email OTP remains available.
 9. **CORS** is currently wide open (`origin: true` with credentials), so any frontend host works,
    including `localhost`. Lock it down to your real domains before public launch.

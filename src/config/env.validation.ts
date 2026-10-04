@@ -14,7 +14,9 @@ export const envValidationSchema = Joi.object({
   SMTP_USER: Joi.string().allow('').default(''),
   SMTP_PASS: Joi.string().allow('').default(''),
   SMTP_FROM: Joi.string().email().required(),
+  ADMIN_LOGIN_EMAIL: Joi.string().email(),
+  ADMIN_LOGIN_PASSWORD: Joi.string().min(16).max(256),
 
   PAID_TOURNAMENTS_ENABLED: Joi.boolean().default(false),
   ROOM_RELEASE_MINUTES: Joi.number().default(15),
-});
+}).and('ADMIN_LOGIN_EMAIL', 'ADMIN_LOGIN_PASSWORD');

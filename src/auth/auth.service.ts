@@ -1,9 +1,10 @@
-import { BadRequestException, HttpException, HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config'; import { JwtService } from '@nestjs/jwt'; import { createHash, randomInt, timingSafeEqual } from 'crypto';
 import { User } from '@prisma/client';
 import { MailService } from '../mail/mail.service'; import { RedisService } from '../redis/redis.service'; import { UsersService } from '../users/users.service'; import { toUserResponse, UserResponse } from '../users/user.mapper';
 import { LoginDto } from './dto/login.dto'; import { RegisterDto } from './dto/register.dto'; import { GoogleStrategy } from './google.strategy';
 import { SocialLoginDto } from './dto/social-login.dto';
+import { AdminPasswordLoginDto } from './dto/admin-password-login.dto';
 @Injectable()
 export class AuthService {
   constructor(private readonly users: UsersService, private readonly redis: RedisService, private readonly mail: MailService, private readonly jwt: JwtService, private readonly config: ConfigService, private readonly google: GoogleStrategy) {}
@@ -21,6 +22,26 @@ export class AuthService {
     await this.redis.client.del(this.otpKey(email), this.attemptsKey(email));
   }
   async login(dto: LoginDto): Promise<UserResponse> { await this.verifyOtp(dto.email, dto.otp); const user = await this.users.findByEmail(dto.email); if (!user) throw new BadRequestException('Account not found, please sign up'); if (!user.isActive) throw new UnauthorizedException('Account is inactive'); return this.issue(user); }
+  async adminPasswordLogin(dto: AdminPasswordLoginDto): Promise<UserResponse> {
+    const configuredEmail = this.config.get<string>('ADMIN_LOGIN_EMAIL')?.trim().toLowerCase();
+    const configuredPassword = this.config.get<string>('ADMIN_LOGIN_PASSWORD');
+    if (!configuredEmail || !configuredPassword) {
+      throw new ServiceUnavailableException('Admin password login is not configured');
+    }
+
+    const digest = (value: string) => createHash('sha256').update(value).digest();
+    const emailMatches = timingSafeEqual(digest(dto.email.trim().toLowerCase()), digest(configuredEmail));
+    const passwordMatches = timingSafeEqual(digest(dto.password), digest(configuredPassword));
+    if (!emailMatches || !passwordMatches) {
+      throw new UnauthorizedException('Invalid admin credentials');
+    }
+
+    const user = await this.users.findByEmail(configuredEmail);
+    if (!user || user.role !== 'ADMIN' || !user.isActive) {
+      throw new UnauthorizedException('Invalid admin credentials');
+    }
+    return this.issue(user);
+  }
   async register(dto: RegisterDto): Promise<UserResponse> { await this.verifyOtp(dto.email, dto.otp); if (await this.users.findByEmail(dto.email)) throw new BadRequestException('An account already exists for this email'); return this.issue(await this.users.create({ name: dto.name, email: dto.email })); }
   async verifyToken(token: string): Promise<{ valid: true }> { try { const payload = await this.jwt.verifyAsync<{ sub: string }>(token); const user = await this.users.findById(payload.sub); if (!user?.isActive) throw new Error(); return { valid: true }; } catch { throw new UnauthorizedException('Invalid or expired token'); } }
   async socialLogin(input: string | SocialLoginDto): Promise<UserResponse> {

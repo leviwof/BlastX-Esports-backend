@@ -9,6 +9,7 @@ import { RegisterDto } from './dto/register.dto';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { SocialLoginDto } from './dto/social-login.dto';
 import { VerifyTokenDto } from './dto/verify-token.dto';
+import { AdminPasswordLoginDto } from './dto/admin-password-login.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -28,6 +29,11 @@ export class AuthController {
   login(@Body() dto: LoginDto) { return this.service.login(dto); }
 
   @Public()
+  @Post('admin-login')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  adminLogin(@Body() dto: AdminPasswordLoginDto) { return this.service.adminPasswordLogin(dto); }
+
+  @Public()
   @Post('register')
   register(@Body() dto: RegisterDto) { return this.service.register(dto); }
 
@@ -41,4 +47,3 @@ export class AuthController {
     return this.service.logout(token, user?.sub);
   }
 }
-
