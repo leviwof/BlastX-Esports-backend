@@ -90,17 +90,26 @@ describe('Live Section DTO Validation Tests', () => {
       expect(errors.length).toBe(0);
     });
 
-    it('still validates the length and characters of a supplied tag', async () => {
-      const invalidTags = ['A', 'TOOLONG', 'BLX!'];
+    it('accepts hyphenated and special character tags like BLX-TEAM', async () => {
+      const validTags = ['BLX-TEAM', 'BLX_1', 'TEAM-A', 'BLX!'];
 
-      for (const tag of invalidTags) {
+      for (const tag of validTags) {
         const dto = plainToInstance(CreateTournamentTeamDto, {
           name: 'BLX Warriors',
           tag,
         });
         const errors = await validate(dto);
-        expect(errors.some((error) => error.property === 'tag')).toBe(true);
+        expect(errors.length).toBe(0);
       }
+    });
+
+    it('rejects tags that exceed maximum length limit', async () => {
+      const dto = plainToInstance(CreateTournamentTeamDto, {
+        name: 'BLX Warriors',
+        tag: 'THIS_TAG_IS_WAY_TOO_LONG_FOR_A_TEAM_TAG',
+      });
+      const errors = await validate(dto);
+      expect(errors.some((error) => error.property === 'tag')).toBe(true);
     });
   });
 });

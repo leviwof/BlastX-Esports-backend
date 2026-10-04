@@ -25,7 +25,7 @@ export class CreateTournamentTeamDto {
   @IsOptional()
   @ValidateIf((_object, value) => typeof value !== 'string' || value.trim().length > 0)
   @IsString()
-  @Matches(/^[A-Za-z0-9]{2,5}$/, { message: 'Tag must be 2 to 5 alphanumeric characters' })
+  @Length(1, 15)
   tag?: string | null;
 
   @IsOptional()

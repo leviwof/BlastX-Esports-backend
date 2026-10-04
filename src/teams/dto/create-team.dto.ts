@@ -13,7 +13,7 @@ export class CreateTeamDto {
 
   @IsNotEmpty()
   @IsString()
-  @Matches(/^[A-Za-z0-9]{2,5}$/, { message: 'Tag must be 2 to 5 alphanumeric characters' })
+  @Length(1, 15)
   tag!: string;
 
   @IsOptional()
