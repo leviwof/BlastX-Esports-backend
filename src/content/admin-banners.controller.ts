@@ -1,5 +1,19 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards } from '@nestjs/common';
-import { ContentService } from './content.service';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  Query,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+  BadRequestException,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ContentService, UploadedImageFile } from './content.service';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
@@ -27,15 +41,41 @@ export class AdminBannersController {
   }
 
   @Post()
-  async createBanner(@Body() dto: CreateBannerDto): Promise<BannerResponse> {
+  @UseInterceptors(FileInterceptor('image', { limits: { fileSize: 5 * 1024 * 1024 } }))
+  async createBanner(
+    @Body() dto: CreateBannerDto,
+    @UploadedFile() file?: UploadedImageFile,
+  ): Promise<
+    | BannerResponse
+    | {
+        status: 'success';
+        message: string;
+        data: { id: string; image_url: string };
+      }
+  > {
+    if (file) {
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+        throw new BadRequestException('Banner images must be JPEG, PNG or WebP');
+      }
+      const { image_url } = await this.contentService.uploadImage(file);
+      const banner = await this.contentService.createBanner({
+        ...dto,
+        image_url,
+      });
+      return {
+        status: 'success',
+        message: 'Banner created and published successfully',
+        data: { id: banner.id, image_url: banner.image_url },
+      };
+    }
+    if (!dto.image_url) {
+      throw new BadRequestException('Upload an image');
+    }
     return this.contentService.createBanner(dto);
   }
 
   @Patch(':id')
-  async updateBanner(
-    @Param('id') id: string,
-    @Body() dto: UpdateBannerDto,
-  ): Promise<BannerResponse> {
+  async updateBanner(@Param('id') id: string, @Body() dto: UpdateBannerDto): Promise<BannerResponse> {
     return this.contentService.updateBanner(id, dto);
   }
 

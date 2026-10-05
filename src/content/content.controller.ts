@@ -3,10 +3,23 @@ import { ContentService } from './content.service';
 import { ListContentQuery } from './dto/list-content.query';
 import { BannerResponse, AnnouncementResponse, NoticeResponse } from './content.mapper';
 import { PaginatedResult } from '../common/pagination.dto';
+import { Public } from '../common/public.decorator';
 
 @Controller()
 export class ContentController {
   constructor(private readonly contentService: ContentService) {}
+
+  @Public()
+  @Get('home/banners')
+  async getHomeBanners() {
+    return this.contentService.listHomeBanners();
+  }
+
+  @Public()
+  @Get('home/live-streams')
+  async getHomeLiveStreams() {
+    return this.contentService.listLiveStreams();
+  }
 
   @Get('banners')
   async getPublicBanners(@Query() query: ListContentQuery): Promise<PaginatedResult<BannerResponse>> {

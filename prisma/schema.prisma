@@ -81,21 +81,23 @@ enum MatchStatus {
 }
 
 model User {
-  id           String    @id @default(cuid())
-  name         String
-  email        String    @unique
-  phone        String?   @db.Text
-  profilePic   String?   @map("profile_pic")
-  googleId     String?   @unique @map("google_id")
-  role         UserRole  @default(USER)
-  isActive     Boolean   @default(true) @map("is_active")
-  xp           Int       @default(0)
-  rank         Int       @default(1)
-  fcmToken     String?   @map("fcm_token") @db.Text
-  fcmUpdatedAt DateTime? @map("fcm_updated_at") @db.Timestamp(3)
-  deviceType   String?   @map("device_type")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  id                 String    @id @default(cuid())
+  name               String
+  email              String    @unique
+  phone              String?   @db.Text
+  profilePic         String?   @map("profile_pic")
+  googleId           String?   @unique @map("google_id")
+  role               UserRole  @default(USER)
+  isActive           Boolean   @default(true) @map("is_active")
+  isVip              Boolean   @default(false) @map("is_vip")
+  crownBadgeUnlocked Boolean   @default(false) @map("crown_badge_unlocked")
+  xp                 Int       @default(0)
+  rank               Int       @default(1)
+  fcmToken           String?   @map("fcm_token") @db.Text
+  fcmUpdatedAt       DateTime? @map("fcm_updated_at") @db.Timestamp(3)
+  deviceType         String?   @map("device_type")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
   gameProfiles              GameProfile[]
   captainTeams              Team[]                   @relation("CaptainTeams")
@@ -155,18 +157,18 @@ model GameProfile {
 }
 
 model Team {
-  id                   String   @id @default(cuid())
-  gameId               String   @map("game_id")
-  tournamentId         String?  @map("tournament_id")
-  persistentSquadId    String?  @map("persistent_squad_id")
+  id                   String    @id @default(cuid())
+  gameId               String    @map("game_id")
+  tournamentId         String?   @map("tournament_id")
+  persistentSquadId    String?   @map("persistent_squad_id")
   name                 String
   tag                  String
-  logoUrl              String?  @map("logo_url")
+  logoUrl              String?   @map("logo_url")
   captainId            String    @map("captain_id")
   ownerRole            OwnerRole @default(LEADER) @map("owner_role")
   inviteCode           String    @unique @map("invite_code")
-  acceptingSubstitutes Boolean  @default(true) @map("accepting_substitutes")
-  createdAt            DateTime @default(now()) @map("created_at")
+  acceptingSubstitutes Boolean   @default(true) @map("accepting_substitutes")
+  createdAt            DateTime  @default(now()) @map("created_at")
 
   game                  Game                     @relation(fields: [gameId], references: [id], onDelete: Cascade)
   tournament            Tournament?              @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
@@ -250,17 +252,17 @@ model Tournament {
 }
 
 model Squad {
-  id             String   @id @default(cuid())
-  gameId         String   @map("game_id")
-  name           String   @db.VarChar(50)
-  tag            String   @default("") @db.VarChar(10)
-  logoUrl        String?  @map("logo_url") @db.VarChar(255)
+  id             String    @id @default(cuid())
+  gameId         String    @map("game_id")
+  name           String    @db.VarChar(50)
+  tag            String    @default("") @db.VarChar(10)
+  logoUrl        String?   @map("logo_url") @db.VarChar(255)
   leaderId       String    @map("leader_id")
   ownerRole      OwnerRole @default(LEADER) @map("owner_role")
   maxMainPlayers Int       @default(4) @map("max_main_players")
-  maxSubstitutes Int      @default(2) @map("max_substitutes")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  maxSubstitutes Int       @default(2) @map("max_substitutes")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   game        Game                   @relation(fields: [gameId], references: [id], onDelete: Cascade)
   leader      User                   @relation("SquadLeader", fields: [leaderId], references: [id], onDelete: Restrict)
@@ -441,18 +443,54 @@ enum NoticeSeverity {
 }
 
 model Banner {
-  id        String    @id @default(cuid())
-  title     String
-  imageUrl  String    @map("image_url")
-  linkUrl   String?   @map("link_url")
-  sortOrder Int       @default(0) @map("sort_order")
-  isActive  Boolean   @default(true) @map("is_active")
-  startsAt  DateTime? @map("starts_at")
-  endsAt    DateTime? @map("ends_at")
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
+  id             String    @id @default(cuid())
+  tagline        String?
+  title          String
+  subtitle       String?
+  brandBadge     String?   @map("brand_badge")
+  imageUrl       String    @map("image_url")
+  buttonText     String?   @map("button_text")
+  targetTabIndex Int       @default(1) @map("target_tab_index")
+  linkUrl        String?   @map("link_url")
+  sortOrder      Int       @default(0) @map("sort_order")
+  isActive       Boolean   @default(true) @map("is_active")
+  startsAt       DateTime? @map("starts_at")
+  endsAt         DateTime? @map("ends_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   @@map("banners")
+}
+
+model LiveStream {
+  id          String   @id @default(cuid())
+  title       String
+  subtitle    String
+  location    String
+  viewerCount String   @default("0") @map("viewer_count")
+  isLive      Boolean  @default(false) @map("is_live")
+  isOfficial  Boolean  @default(false) @map("is_official")
+  imageUrl    String   @map("image_url")
+  streamUrl   String   @map("stream_url")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("live_streams")
+}
+
+model PartnerInquiry {
+  id              String   @id @default(cuid())
+  brandName       String   @map("brand_name")
+  contactName     String   @map("contact_name")
+  email           String
+  phone           String
+  partnershipType String   @map("partnership_type")
+  message         String
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("partner_inquiries")
 }
 
 model Announcement {

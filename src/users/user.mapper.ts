@@ -24,6 +24,8 @@ export interface UserResponse {
   email: string;
   phone: string | null;
   profile_pic: string | null;
+  is_vip: boolean;
+  crown_badge_unlocked: boolean;
   role: string;
   is_active: boolean;
   created_at: Date;
@@ -60,6 +62,8 @@ export const toUserResponse = (
   email: user.email,
   phone: user.phone,
   profile_pic: user.profilePic,
+  is_vip: user.isVip,
+  crown_badge_unlocked: user.crownBadgeUnlocked,
   role: user.role === 'USER' ? 'PLAYER' : user.role,
   is_active: user.isActive,
   created_at: user.createdAt,
@@ -93,6 +97,8 @@ export interface AdminUserResponse {
   name: string;
   email: string;
   profile_pic: string | null;
+  is_vip: boolean;
+  crown_badge_unlocked: boolean;
   role: 'PLAYER' | 'ADMIN';
   is_active: boolean;
   xp: number;
@@ -106,6 +112,8 @@ export const toAdminUserResponse = (user: User): AdminUserResponse => ({
   name: user.name,
   email: user.email,
   profile_pic: user.profilePic,
+  is_vip: user.isVip,
+  crown_badge_unlocked: user.crownBadgeUnlocked,
   role: user.role === 'USER' ? 'PLAYER' : 'ADMIN',
   is_active: user.isActive,
   xp: user.xp ?? 0,

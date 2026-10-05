@@ -18,14 +18,18 @@ import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 import { CreateNoticeDto } from './dto/create-notice.dto';
 import { UpdateNoticeDto } from './dto/update-notice.dto';
+import { CreateLiveStreamDto } from './dto/create-live-stream.dto';
+import { UpdateLiveStreamDto } from './dto/update-live-stream.dto';
 import { ListContentQuery } from './dto/list-content.query';
 import {
   BannerResponse,
   AnnouncementResponse,
   NoticeResponse,
+  LiveStreamResponse,
   toBannerResponse,
   toAnnouncementResponse,
   toNoticeResponse,
+  toLiveStreamResponse,
 } from './content.mapper';
 import { createPaginatedResponse, PaginatedResult } from '../common/pagination.dto';
 
@@ -192,17 +196,14 @@ export class ContentService {
 
       const { id } = (await uploadResponse.json()) as { id: string };
       uploadedFileId = id;
-      const permissionResponse = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${id}/permissions?supportsAllDrives=true`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ role: 'reader', type: 'anyone' }),
+      const permissionResponse = await fetch(`https://www.googleapis.com/drive/v3/files/${id}/permissions?supportsAllDrives=true`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
         },
-      );
+        body: JSON.stringify({ role: 'reader', type: 'anyone' }),
+      });
       if (!permissionResponse.ok) {
         const details = await permissionResponse.text();
         this.logger.error(`Google Drive image permission setup failed with status ${permissionResponse.status}: ${details}`);
@@ -221,10 +222,10 @@ export class ContentService {
 
   private async deleteGoogleDriveImage(fileId: string, accessToken: string): Promise<void> {
     try {
-      const response = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true`,
-        { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } },
-      );
+      const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
       if (!response.ok) {
         this.logger.error(`Could not remove incomplete Google Drive image ${fileId}: status ${response.status}`);
       }
@@ -279,6 +280,21 @@ export class ContentService {
     return createPaginatedResponse(banners.map(toBannerResponse), query.page ?? 1, query.limit ?? 20, total);
   }
 
+  async listHomeBanners(): Promise<BannerResponse[]> {
+    const now = new Date();
+    const banners = await this.prisma.banner.findMany({
+      where: {
+        isActive: true,
+        AND: [
+          { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+          { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
+        ],
+      },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+    });
+    return banners.map(toBannerResponse);
+  }
+
   async getBanner(id: string): Promise<BannerResponse> {
     const banner = await this.prisma.banner.findUnique({ where: { id } });
     if (!banner) throw new NotFoundException(`Banner with ID '${id}' not found`);
@@ -286,12 +302,21 @@ export class ContentService {
   }
 
   async createBanner(dto: CreateBannerDto): Promise<BannerResponse> {
+    const imageUrl = dto.image_url?.trim();
+    if (!imageUrl) {
+      throw new BadRequestException('Upload an image or provide image_url');
+    }
     const banner = await this.prisma.banner.create({
       data: {
+        tagline: dto.tagline?.trim() || null,
         title: dto.title,
-        imageUrl: dto.image_url,
+        subtitle: dto.subtitle?.trim() || null,
+        brandBadge: dto.brand_badge?.trim() || null,
+        imageUrl,
+        buttonText: dto.button_text?.trim() || null,
+        targetTabIndex: dto.target_tab_index ?? 1,
         linkUrl: dto.link_url ?? null,
-        sortOrder: dto.sort_order ?? 0,
+        sortOrder: dto.order ?? dto.sort_order ?? 0,
         isActive: dto.is_active ?? true,
         startsAt: dto.starts_at ? new Date(dto.starts_at) : null,
         endsAt: dto.ends_at ? new Date(dto.ends_at) : null,
@@ -305,10 +330,16 @@ export class ContentService {
     if (!existing) throw new NotFoundException(`Banner with ID '${id}' not found`);
 
     const data: Prisma.BannerUpdateInput = {};
+    if (dto.tagline !== undefined) data.tagline = dto.tagline.trim() || null;
     if (dto.title !== undefined) data.title = dto.title;
+    if (dto.subtitle !== undefined) data.subtitle = dto.subtitle.trim() || null;
+    if (dto.brand_badge !== undefined) data.brandBadge = dto.brand_badge.trim() || null;
     if (dto.image_url !== undefined) data.imageUrl = dto.image_url;
+    if (dto.button_text !== undefined) data.buttonText = dto.button_text.trim() || null;
+    if (dto.target_tab_index !== undefined) data.targetTabIndex = dto.target_tab_index;
     if (dto.link_url !== undefined) data.linkUrl = dto.link_url;
     if (dto.sort_order !== undefined) data.sortOrder = dto.sort_order;
+    if (dto.order !== undefined) data.sortOrder = dto.order;
     if (dto.is_active !== undefined) data.isActive = dto.is_active;
     if (dto.starts_at !== undefined) data.startsAt = dto.starts_at ? new Date(dto.starts_at) : null;
     if (dto.ends_at !== undefined) data.endsAt = dto.ends_at ? new Date(dto.ends_at) : null;
@@ -323,6 +354,56 @@ export class ContentService {
 
     await this.prisma.banner.delete({ where: { id } });
     return { message: 'Banner deleted successfully' };
+  }
+
+  async listLiveStreams(): Promise<LiveStreamResponse[]> {
+    const streams = await this.prisma.liveStream.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+    });
+    return streams.map(toLiveStreamResponse);
+  }
+
+  async createLiveStream(dto: CreateLiveStreamDto): Promise<LiveStreamResponse> {
+    const stream = await this.prisma.liveStream.create({
+      data: {
+        title: dto.title.trim(),
+        subtitle: dto.subtitle.trim(),
+        location: dto.location.trim(),
+        viewerCount: dto.viewer_count?.trim() || '0',
+        isLive: dto.is_live ?? false,
+        isOfficial: dto.is_official ?? false,
+        imageUrl: dto.image_url,
+        streamUrl: dto.stream_url,
+        sortOrder: dto.order ?? 0,
+      },
+    });
+    return toLiveStreamResponse(stream);
+  }
+
+  async updateLiveStream(id: string, dto: UpdateLiveStreamDto): Promise<LiveStreamResponse> {
+    const existing = await this.prisma.liveStream.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException(`Live stream with ID '${id}' not found`);
+
+    const data: Prisma.LiveStreamUpdateInput = {};
+    if (dto.title !== undefined) data.title = dto.title.trim();
+    if (dto.subtitle !== undefined) data.subtitle = dto.subtitle.trim();
+    if (dto.location !== undefined) data.location = dto.location.trim();
+    if (dto.viewer_count !== undefined) data.viewerCount = dto.viewer_count.trim();
+    if (dto.is_live !== undefined) data.isLive = dto.is_live;
+    if (dto.is_official !== undefined) data.isOfficial = dto.is_official;
+    if (dto.image_url !== undefined) data.imageUrl = dto.image_url;
+    if (dto.stream_url !== undefined) data.streamUrl = dto.stream_url;
+    if (dto.order !== undefined) data.sortOrder = dto.order;
+
+    const stream = await this.prisma.liveStream.update({ where: { id }, data });
+    return toLiveStreamResponse(stream);
+  }
+
+  async deleteLiveStream(id: string): Promise<{ message: string }> {
+    const existing = await this.prisma.liveStream.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException(`Live stream with ID '${id}' not found`);
+    await this.prisma.liveStream.delete({ where: { id } });
+    return { message: 'Live stream deleted successfully' };
   }
 
   // ---------------- ANNOUNCEMENTS ----------------
@@ -385,7 +466,9 @@ export class ContentService {
   }
 
   async deleteAnnouncement(id: string): Promise<{ message: string }> {
-    const existing = await this.prisma.announcement.findUnique({ where: { id } });
+    const existing = await this.prisma.announcement.findUnique({
+      where: { id },
+    });
     if (!existing) throw new NotFoundException(`Announcement with ID '${id}' not found`);
 
     await this.prisma.announcement.delete({ where: { id } });

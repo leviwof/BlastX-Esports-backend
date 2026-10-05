@@ -27,6 +27,94 @@ describe('ContentService image uploads', () => {
     process.env.NODE_ENV = 'test';
   });
 
+  describe('ContentService home content', () => {
+    it('returns only currently active banners in configured order', async () => {
+      const banner = {
+        id: 'banner_1',
+        tagline: 'TAGLINE',
+        title: 'BGC 2026',
+        subtitle: 'Bigger battles',
+        brandBadge: 'COMMUNITY',
+        imageUrl: 'https://example.com/banner.png',
+        buttonText: 'Know more',
+        targetTabIndex: 1,
+        linkUrl: null,
+        sortOrder: 2,
+        isActive: true,
+        startsAt: null,
+        endsAt: null,
+        createdAt: new Date('2026-10-01T00:00:00Z'),
+        updatedAt: new Date('2026-10-01T00:00:00Z'),
+      };
+      const prisma = {
+        banner: { findMany: jest.fn().mockResolvedValue([banner]) },
+      };
+      const service = new ContentService(prisma as never);
+
+      await expect(service.listHomeBanners()).resolves.toEqual([
+        {
+          id: 'banner_1',
+          tagline: 'TAGLINE',
+          title: 'BGC 2026',
+          subtitle: 'Bigger battles',
+          brand_badge: 'COMMUNITY',
+          image_url: 'https://example.com/banner.png',
+          button_text: 'Know more',
+          target_tab_index: 1,
+          link_url: null,
+          sort_order: 2,
+          order: 2,
+          is_active: true,
+          starts_at: null,
+          ends_at: null,
+          created_at: banner.createdAt,
+          updated_at: banner.updatedAt,
+        },
+      ]);
+      expect(prisma.banner.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ isActive: true }),
+          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+        }),
+      );
+    });
+
+    it('serializes stored live streams in the home app contract', async () => {
+      const prisma = {
+        liveStream: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'stream_1',
+              title: 'PRO SERIES',
+              subtitle: 'Grand Finals',
+              location: 'New Delhi, India',
+              viewerCount: '12.4K',
+              isLive: true,
+              isOfficial: true,
+              imageUrl: 'https://example.com/stream.png',
+              streamUrl: 'https://youtube.com/live/abc',
+            },
+          ]),
+        },
+      };
+      const service = new ContentService(prisma as never);
+
+      await expect(service.listLiveStreams()).resolves.toEqual([
+        {
+          id: 'stream_1',
+          title: 'PRO SERIES',
+          subtitle: 'Grand Finals',
+          location: 'New Delhi, India',
+          viewer_count: '12.4K',
+          is_live: true,
+          is_official: true,
+          image_url: 'https://example.com/stream.png',
+          stream_url: 'https://youtube.com/live/abc',
+        },
+      ]);
+    });
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
     if (originalSupabaseUrl === undefined) delete process.env.SUPABASE_URL;
@@ -61,12 +149,13 @@ describe('ContentService image uploads', () => {
       buffer: pngHeader,
     });
 
-    expect(result.image_url).toMatch(
-      /^https:\/\/storage\.example\.com\/storage\/v1\/object\/public\/proofs\/admin-images\/.+\.png$/,
-    );
+    expect(result.image_url).toMatch(/^https:\/\/storage\.example\.com\/storage\/v1\/object\/public\/proofs\/admin-images\/.+\.png$/);
     expect(fetch).toHaveBeenCalledWith(
       expect.stringMatching(/\/storage\/v1\/object\/proofs\/admin-images\/.+\.png$/),
-      expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ 'Content-Type': 'image/png' }) }),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Content-Type': 'image/png' }),
+      }),
     );
   });
 

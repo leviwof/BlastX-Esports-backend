@@ -25,6 +25,7 @@ import { AdminStatsModule } from './admin-stats/admin-stats.module';
 import { ContentModule } from './content/content.module';
 import { GamesModule } from './games/games.module';
 import { SquadsModule } from './squads/squads.module';
+import { PartnersModule } from './partners/partners.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { SquadsModule } from './squads/squads.module';
     ContentModule,
     GamesModule,
     SquadsModule,
+    PartnersModule,
     RealtimeModule,
     SchedulerModule,
     NotificationsModule,

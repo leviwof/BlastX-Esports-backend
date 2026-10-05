@@ -6,6 +6,14 @@ export class AdminUpdateUserDto {
   is_active?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  is_vip?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  crown_badge_unlocked?: boolean;
+
+  @IsOptional()
   @IsIn(['PLAYER', 'ADMIN'])
   role?: 'PLAYER' | 'ADMIN';
 }

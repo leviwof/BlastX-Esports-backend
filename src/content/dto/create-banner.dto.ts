@@ -1,13 +1,37 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsDateString, IsInt, IsNotEmpty, IsOptional, IsString, IsUrl } from 'class-validator';
+import { IsBoolean, IsDateString, IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Max, Min } from 'class-validator';
 
 export class CreateBannerDto {
+  @IsOptional()
+  @IsString()
+  tagline?: string;
+
   @IsString()
   @IsNotEmpty()
   title: string;
 
+  @IsOptional()
+  @IsString()
+  subtitle?: string;
+
+  @IsOptional()
+  @IsString()
+  brand_badge?: string;
+
+  @IsOptional()
   @IsUrl()
-  image_url: string;
+  image_url?: string;
+
+  @IsOptional()
+  @IsString()
+  button_text?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(4)
+  target_tab_index?: number;
 
   @IsOptional()
   @IsUrl()
@@ -16,7 +40,14 @@ export class CreateBannerDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(0)
   sort_order?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  order?: number;
 
   @IsOptional()
   @IsBoolean()

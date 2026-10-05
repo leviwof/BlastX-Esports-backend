@@ -109,6 +109,8 @@ All successful API responses return HTTP 200/201 wrapped in the standard envelop
     "name": "Alex Mercer",
     "email": "alex.mercer@gmail.com",
     "profile_pic": "https://storage.blastx.com/profiles/user_123.jpg",
+    "is_vip": false,
+    "crown_badge_unlocked": false,
     "role": "PLAYER",
     "is_active": true,
     "created_at": "2024-01-15T10:30:00.000Z",
@@ -131,7 +133,59 @@ All successful API responses return HTTP 200/201 wrapped in the standard envelop
 
 ---
 
-### 1.2 Update User Profile
+### Home Hub & Partnership APIs
+
+### Get Home Banners
+- **Method**: `GET`
+- **Endpoint**: `/home/banners`
+- **Auth**: Optional
+- **Description**: Returns active banners within their optional start/end window, ordered by `order`.
+
+### Create Home Banner (Admin)
+- **Method**: `POST`
+- **Endpoint**: `/admin/banners`
+- **Auth**: Admin bearer token
+- **Content-Type**: `multipart/form-data`
+- **Fields**: `tagline`, `title`, `subtitle`, `brand_badge`, `button_text`, `target_tab_index` (0-4), `order`, and `image` (JPEG/PNG/GIF/WebP, up to 5 MB).
+
+### Delete Home Banner (Admin)
+- **Method**: `DELETE`
+- **Endpoint**: `/admin/banners/{bannerId}`
+- **Auth**: Admin bearer token
+
+### Get Live Streams
+- **Method**: `GET`
+- **Endpoint**: `/home/live-streams`
+- **Auth**: Optional
+- **Description**: Returns configured stream cards in display order. `viewer_count` is an admin-maintained display value; no live YouTube metrics integration is configured.
+
+### Manage Live Streams (Admin)
+- **Endpoints**: `GET`, `POST`, `PATCH /{id}`, and `DELETE /{id}` under `/admin/live-streams`
+- **Auth**: Admin bearer token
+- **Description**: Configure stream metadata, live/official flags, viewer display count, image/stream URLs, and ordering.
+
+### Submit Partner Inquiry
+- **Method**: `POST`
+- **Endpoint**: `/partners/inquire`
+- **Auth**: Optional
+- **Content-Type**: `application/json`
+- **Body**: `brand_name`, `contact_name`, `email`, `phone`, `partnership_type`, and `message`.
+
+### Review Partner Inquiries (Admin)
+- **Method**: `GET`
+- **Endpoint**: `/admin/partners/inquiries`
+- **Auth**: Admin bearer token
+- **Description**: Returns the latest 100 submissions, newest first.
+
+### Set VIP and Crown Badge (Admin)
+- **Method**: `PATCH`
+- **Endpoint**: `/admin/users/{userId}`
+- **Auth**: Admin bearer token
+- **Body**: `is_vip` and/or `crown_badge_unlocked` boolean values.
+
+---
+
+## 1.2 Update User Profile
 - **Method**: `PATCH`
 - **Endpoint**: `/users/me`
 - **Auth**: `Bearer <token>`

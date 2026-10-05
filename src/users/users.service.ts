@@ -14,8 +14,6 @@ import {
 } from './user.mapper';
 import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
 import { calculateRank, PlayerRankResponse } from '../common/rank-system';
-
-
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -265,6 +263,12 @@ export class UsersService {
     if (typeof dto.is_active === 'boolean') {
       data.isActive = dto.is_active;
     }
+    if (typeof dto.is_vip === 'boolean') {
+      data.isVip = dto.is_vip;
+    }
+    if (typeof dto.crown_badge_unlocked === 'boolean') {
+      data.crownBadgeUnlocked = dto.crown_badge_unlocked;
+    }
     if (dto.role) {
       data.role = dto.role === 'PLAYER' ? UserRole.USER : UserRole.ADMIN;
     }
@@ -322,4 +326,3 @@ export class UsersService {
     };
   }
 }
-

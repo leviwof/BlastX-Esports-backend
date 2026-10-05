@@ -16,6 +16,8 @@ describe('Users Profile Stats & Game Profile Service', () => {
     googleId: null,
     role: UserRole.USER,
     isActive: true,
+    isVip: true,
+    crownBadgeUnlocked: false,
     createdAt: new Date('2024-01-15T10:30:00.000Z'),
     updatedAt: new Date('2024-01-15T10:30:00.000Z'),
     gameProfiles: [
@@ -72,13 +74,10 @@ describe('Users Profile Stats & Game Profile Service', () => {
   });
 
   describe('UpdateUserDto phone validation', () => {
-    it.each(['6123456789', '7123456789', '8123456789', '9123456789'])(
-      'accepts a 10-digit Indian mobile number: %s',
-      async (phone) => {
-        const dto = Object.assign(new UpdateUserDto(), { phone });
-        await expect(validate(dto)).resolves.toHaveLength(0);
-      },
-    );
+    it.each(['6123456789', '7123456789', '8123456789', '9123456789'])('accepts a 10-digit Indian mobile number: %s', async (phone) => {
+      const dto = Object.assign(new UpdateUserDto(), { phone });
+      await expect(validate(dto)).resolves.toHaveLength(0);
+    });
 
     it.each(['5123456789', '912345678', '91234567890', '+919123456789', 'abcdefghij'])(
       'rejects an invalid Indian mobile number: %s',
@@ -99,6 +98,8 @@ describe('Users Profile Stats & Game Profile Service', () => {
       expect(result!.email).toBe('alex.mercer@gmail.com');
       expect(result!.phone).toBe('9876543210');
       expect(result!.profile_pic).toBe('https://example.com/avatar.jpg');
+      expect(result!.is_vip).toBe(true);
+      expect(result!.crown_badge_unlocked).toBe(false);
       expect(result!.role).toBe('PLAYER'); // Mapped from USER -> PLAYER
       expect(result!.is_active).toBe(true);
       expect(result!.tournaments_played).toBe(3);
