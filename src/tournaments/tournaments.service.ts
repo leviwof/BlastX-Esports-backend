@@ -302,7 +302,7 @@ export class TournamentsService {
     if (where.game) countsWhere.game = where.game;
     countsWhere.section = requiredSection ?? dto.section ?? TournamentSection.BLASTX;
 
-    const [items, total, liveCount, upcomingCount, completedCount] = await Promise.all([
+    const [items, total, statusGroups] = await Promise.all([
       this.prisma.tournament.findMany({
         where,
         include: { game: { select: { slug: true } } },
@@ -311,10 +311,24 @@ export class TournamentsService {
         take: dto.take,
       }),
       this.prisma.tournament.count({ where }),
-      this.prisma.tournament.count({ where: { ...countsWhere, status: TournamentStatus.LIVE } }),
-      this.prisma.tournament.count({ where: { ...countsWhere, status: { in: TournamentsService.UPCOMING_STATUSES } } }),
-      this.prisma.tournament.count({ where: { ...countsWhere, status: TournamentStatus.COMPLETED } }),
+      this.prisma.tournament.groupBy({
+        by: ['status'],
+        where: countsWhere,
+        _count: { _all: true },
+      }),
     ]);
+
+    const statusMap = new Map<string, number>();
+    for (const sg of statusGroups) {
+      statusMap.set(sg.status, sg._count._all);
+    }
+
+    const liveCount = statusMap.get(TournamentStatus.LIVE) || 0;
+    const upcomingCount = TournamentsService.UPCOMING_STATUSES.reduce(
+      (sum, st) => sum + (statusMap.get(st) || 0),
+      0,
+    );
+    const completedCount = statusMap.get(TournamentStatus.COMPLETED) || 0;
 
     return {
       ...createPaginatedResponse(items, dto.page || 1, dto.limit || 20, total),
