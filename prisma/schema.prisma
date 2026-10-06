@@ -445,7 +445,7 @@ enum NoticeSeverity {
 model Banner {
   id             String    @id @default(cuid())
   tagline        String?
-  title          String
+  title          String?
   subtitle       String?
   brandBadge     String?   @map("brand_badge")
   imageUrl       String    @map("image_url")

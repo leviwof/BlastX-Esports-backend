@@ -6,9 +6,9 @@ export class CreateBannerDto {
   @IsString()
   tagline?: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  title: string;
+  title?: string;
 
   @IsOptional()
   @IsString()

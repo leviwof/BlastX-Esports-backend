@@ -313,7 +313,7 @@ export class ContentService {
     const banner = await this.prisma.banner.create({
       data: {
         tagline: dto.tagline?.trim() || null,
-        title: dto.title,
+        title: dto.title?.trim() || null,
         subtitle: dto.subtitle?.trim() || null,
         brandBadge: dto.brand_badge?.trim() || null,
         imageUrl,
@@ -335,7 +335,7 @@ export class ContentService {
 
     const data: Prisma.BannerUpdateInput = {};
     if (dto.tagline !== undefined) data.tagline = dto.tagline.trim() || null;
-    if (dto.title !== undefined) data.title = dto.title;
+    if (dto.title !== undefined) data.title = dto.title.trim() || null;
     if (dto.subtitle !== undefined) data.subtitle = dto.subtitle.trim() || null;
     if (dto.brand_badge !== undefined) data.brandBadge = dto.brand_badge.trim() || null;
     if (dto.image_url !== undefined) data.imageUrl = dto.image_url;

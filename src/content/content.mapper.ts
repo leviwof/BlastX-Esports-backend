@@ -3,7 +3,7 @@ import { Banner, Announcement, LiveStream, Notice } from '@prisma/client';
 export interface BannerResponse {
   id: string;
   tagline: string | null;
-  title: string;
+  title: string | null;
   subtitle: string | null;
   brand_badge: string | null;
   image_url: string;

@@ -93,6 +93,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     await this.$executeRawUnsafe(
       'ALTER TABLE "partner_inquiries" ADD COLUMN IF NOT EXISTS "status" "PartnerInquiryStatus" NOT NULL DEFAULT \'NEW\';',
     ).catch(() => {});
+    await this.$executeRawUnsafe(
+      'ALTER TABLE "banners" ALTER COLUMN "title" DROP NOT NULL;',
+    ).catch(() => {});
   }
 
   /** Keep retrying until the database answers, then stop the timer. */
