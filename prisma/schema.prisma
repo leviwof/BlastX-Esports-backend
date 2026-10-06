@@ -493,15 +493,23 @@ model BrandPartner {
   @@map("brand_partners")
 }
 
+enum PartnerInquiryStatus {
+  NEW
+  IN_REVIEW
+  CONTACTED
+  CLOSED
+}
+
 model PartnerInquiry {
-  id              String   @id @default(cuid())
-  brandName       String   @map("brand_name")
-  contactName     String   @map("contact_name")
+  id              String               @id @default(cuid())
+  brandName       String               @map("brand_name")
+  contactName     String               @map("contact_name")
   email           String
   phone           String
-  partnershipType String   @map("partnership_type")
+  partnershipType String               @map("partnership_type")
   message         String
-  createdAt       DateTime @default(now()) @map("created_at")
+  status          PartnerInquiryStatus @default(NEW)
+  createdAt       DateTime             @default(now()) @map("created_at")
 
   @@index([createdAt])
   @@map("partner_inquiries")

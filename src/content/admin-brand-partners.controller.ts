@@ -6,6 +6,7 @@ import {
   Get,
   Param,
   Patch,
+  Put,
   Post,
   UploadedFile,
   UseGuards,
@@ -48,7 +49,12 @@ export class AdminBrandPartnersController {
   }
 
   @Patch(':id')
-  updateBrandPartner(@Param('id') id: string, @Body() dto: UpdateBrandPartnerDto) {
+  updateBrandPartnerPatch(@Param('id') id: string, @Body() dto: UpdateBrandPartnerDto) {
+    return this.contentService.updateBrandPartner(id, dto);
+  }
+
+  @Put(':id')
+  updateBrandPartnerPut(@Param('id') id: string, @Body() dto: UpdateBrandPartnerDto) {
     return this.contentService.updateBrandPartner(id, dto);
   }
 

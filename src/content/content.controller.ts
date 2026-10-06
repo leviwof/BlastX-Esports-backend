@@ -24,7 +24,11 @@ export class ContentController {
   @Public()
   @Get('home/partners')
   async getHomePartners() {
-    return this.contentService.listHomePartners();
+    const partners = await this.contentService.listHomePartners();
+    return {
+      success: true,
+      partners,
+    };
   }
 
   @Get('banners')

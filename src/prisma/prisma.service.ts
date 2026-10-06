@@ -79,12 +79,20 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "points_system" JSONB;
       ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "schedule" JSONB;
       ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "announcements" JSONB;
-      ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "round" TEXT NOT NULL DEFAULT 'Round 1';
-      ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "ended_at" TIMESTAMP(3);
       ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "stream_url" TEXT;
       ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "winner_team_name" TEXT;
       ALTER TABLE "matches" ADD COLUMN IF NOT EXISTS "top_killer_name" TEXT;
     `).catch(() => {});
+    await this.$executeRawUnsafe(`
+      DO $$ BEGIN
+        CREATE TYPE "PartnerInquiryStatus" AS ENUM ('NEW', 'IN_REVIEW', 'CONTACTED', 'CLOSED');
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END $$;
+    `).catch(() => {});
+    await this.$executeRawUnsafe(
+      'ALTER TABLE "partner_inquiries" ADD COLUMN IF NOT EXISTS "status" "PartnerInquiryStatus" NOT NULL DEFAULT \'NEW\';',
+    ).catch(() => {});
   }
 
   /** Keep retrying until the database answers, then stop the timer. */

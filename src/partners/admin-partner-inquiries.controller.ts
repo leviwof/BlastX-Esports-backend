@@ -1,5 +1,5 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import { PartnerInquiryStatus, UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
@@ -14,5 +14,13 @@ export class AdminPartnerInquiriesController {
   @Get()
   listInquiries() {
     return this.partnersService.listInquiries();
+  }
+
+  @Patch(':id/status')
+  updateStatus(
+    @Param('id') id: string,
+    @Body('status') status: PartnerInquiryStatus,
+  ) {
+    return this.partnersService.updateInquiryStatus(id, status);
   }
 }
