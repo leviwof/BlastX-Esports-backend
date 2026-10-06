@@ -21,6 +21,12 @@ export class ContentController {
     return this.contentService.listLiveStreams();
   }
 
+  @Public()
+  @Get('home/partners')
+  async getHomePartners() {
+    return this.contentService.listHomePartners();
+  }
+
   @Get('banners')
   async getPublicBanners(@Query() query: ListContentQuery): Promise<PaginatedResult<BannerResponse>> {
     if (query.is_active === undefined) {

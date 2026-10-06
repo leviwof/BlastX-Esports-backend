@@ -472,11 +472,25 @@ model LiveStream {
   isOfficial  Boolean  @default(false) @map("is_official")
   imageUrl    String   @map("image_url")
   streamUrl   String   @map("stream_url")
+  ctaText     String   @default("Watch Now →") @map("cta_text")
   sortOrder   Int      @default(0) @map("sort_order")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@map("live_streams")
+}
+
+model BrandPartner {
+  id        String   @id @default(cuid())
+  name      String
+  logoUrl   String   @map("logo_url")
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@map("brand_partners")
 }
 
 model PartnerInquiry {

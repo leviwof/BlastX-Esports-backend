@@ -17,6 +17,7 @@ describe('PartnersService', () => {
         message: ' We would like to discuss sponsorship opportunities. ',
       }),
     ).resolves.toEqual({
+      success: true,
       status: 'success',
       message: 'Partner inquiry received. Our team will contact you shortly.',
     });

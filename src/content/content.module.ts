@@ -6,6 +6,7 @@ import { AdminAnnouncementsController } from './admin-announcements.controller';
 import { AdminNoticesController } from './admin-notices.controller';
 import { AdminImageUploadController } from './admin-image-upload.controller';
 import { AdminLiveStreamsController } from './admin-live-streams.controller';
+import { AdminBrandPartnersController } from './admin-brand-partners.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
@@ -17,6 +18,7 @@ import { PrismaModule } from '../prisma/prisma.module';
     AdminNoticesController,
     AdminImageUploadController,
     AdminLiveStreamsController,
+    AdminBrandPartnersController,
   ],
   providers: [ContentService],
   exports: [ContentService],

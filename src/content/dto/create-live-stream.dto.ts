@@ -33,6 +33,11 @@ export class CreateLiveStreamDto {
   stream_url: string;
 
   @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  cta_text?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(0)

@@ -6,7 +6,11 @@ import { CreatePartnerInquiryDto } from './dto/create-partner-inquiry.dto';
 export class PartnersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async createInquiry(dto: CreatePartnerInquiryDto): Promise<{ status: 'success'; message: string }> {
+  async createInquiry(dto: CreatePartnerInquiryDto): Promise<{
+    success: true;
+    status: 'success';
+    message: string;
+  }> {
     await this.prisma.partnerInquiry.create({
       data: {
         brandName: dto.brand_name.trim(),
@@ -19,6 +23,7 @@ export class PartnersService {
     });
 
     return {
+      success: true,
       status: 'success',
       message: 'Partner inquiry received. Our team will contact you shortly.',
     };

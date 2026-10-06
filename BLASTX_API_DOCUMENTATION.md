@@ -146,7 +146,7 @@ All successful API responses return HTTP 200/201 wrapped in the standard envelop
 - **Endpoint**: `/admin/banners`
 - **Auth**: Admin bearer token
 - **Content-Type**: `multipart/form-data`
-- **Fields**: `tagline`, `title`, `subtitle`, `brand_badge`, `button_text`, `target_tab_index` (0-4), `order`, and `image` (JPEG/PNG/GIF/WebP, up to 5 MB).
+- **Fields**: `tagline`, `title`, `subtitle`, `brand_badge`, `button_text`, `target_tab_index` (0-4), `order`, and `image` (JPEG/PNG/WebP, up to 5 MB).
 
 ### Delete Home Banner (Admin)
 - **Method**: `DELETE`
@@ -162,7 +162,18 @@ All successful API responses return HTTP 200/201 wrapped in the standard envelop
 ### Manage Live Streams (Admin)
 - **Endpoints**: `GET`, `POST`, `PATCH /{id}`, and `DELETE /{id}` under `/admin/live-streams`
 - **Auth**: Admin bearer token
-- **Description**: Configure stream metadata, live/official flags, viewer display count, image/stream URLs, and ordering.
+- **Description**: Configure stream metadata, live/official flags, viewer display count, image/stream URLs, call-to-action text (`cta_text`), and ordering.
+
+### Get Home Brand Partners
+- **Method**: `GET`
+- **Endpoint**: `/home/partners`
+- **Auth**: Optional
+- **Description**: Returns active partner logos in configured order as `{ id, name, logo_url }`.
+
+### Manage Brand Partners (Admin)
+- **Endpoints**: `GET`, `POST`, `PATCH /{id}`, and `DELETE /{id}` under `/admin/partners`
+- **Auth**: Admin bearer token
+- **Description**: Manage partner names, logos, active state, and ordering. Create with multipart field `logo` (JPEG/PNG/WebP, up to 5 MB) or provide a `logo_url`. Apply the `20261006200000_home_brand_partners` Prisma migration before use.
 
 ### Submit Partner Inquiry
 - **Method**: `POST`
@@ -170,6 +181,7 @@ All successful API responses return HTTP 200/201 wrapped in the standard envelop
 - **Auth**: Optional
 - **Content-Type**: `application/json`
 - **Body**: `brand_name`, `contact_name`, `email`, `phone`, `partnership_type`, and `message`.
+- **Success response**: `{ "success": true, "status": "success", "message": "Partner inquiry received. Our team will contact you shortly." }`
 
 ### Review Partner Inquiries (Admin)
 - **Method**: `GET`

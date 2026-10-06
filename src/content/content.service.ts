@@ -20,16 +20,20 @@ import { CreateNoticeDto } from './dto/create-notice.dto';
 import { UpdateNoticeDto } from './dto/update-notice.dto';
 import { CreateLiveStreamDto } from './dto/create-live-stream.dto';
 import { UpdateLiveStreamDto } from './dto/update-live-stream.dto';
+import { CreateBrandPartnerDto } from './dto/create-brand-partner.dto';
+import { UpdateBrandPartnerDto } from './dto/update-brand-partner.dto';
 import { ListContentQuery } from './dto/list-content.query';
 import {
   BannerResponse,
   AnnouncementResponse,
   NoticeResponse,
   LiveStreamResponse,
+  BrandPartnerResponse,
   toBannerResponse,
   toAnnouncementResponse,
   toNoticeResponse,
   toLiveStreamResponse,
+  toBrandPartnerResponse,
 } from './content.mapper';
 import { createPaginatedResponse, PaginatedResult } from '../common/pagination.dto';
 
@@ -363,6 +367,75 @@ export class ContentService {
     return streams.map(toLiveStreamResponse);
   }
 
+  async listHomePartners(): Promise<BrandPartnerResponse[]> {
+    const partners = await this.prisma.brandPartner.findMany({
+      where: { isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true, name: true, logoUrl: true },
+    });
+    return partners.map(toBrandPartnerResponse);
+  }
+
+  async listBrandPartners(): Promise<
+    (BrandPartnerResponse & { sort_order: number; is_active: boolean })[]
+  > {
+    const partners = await this.prisma.brandPartner.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true, name: true, logoUrl: true, sortOrder: true, isActive: true },
+    });
+    return partners.map((partner) => ({
+      ...toBrandPartnerResponse(partner),
+      sort_order: partner.sortOrder,
+      is_active: partner.isActive,
+    }));
+  }
+
+  async createBrandPartner(
+    dto: CreateBrandPartnerDto,
+    uploadedLogoUrl?: string,
+  ): Promise<BrandPartnerResponse> {
+    const logoUrl = uploadedLogoUrl ?? dto.logo_url;
+    if (!logoUrl) {
+      throw new BadRequestException('Upload a partner logo or provide logo_url');
+    }
+    const partner = await this.prisma.brandPartner.create({
+      data: {
+        name: dto.name.trim(),
+        logoUrl,
+        sortOrder: dto.order ?? dto.sort_order ?? 0,
+        isActive: dto.is_active ?? true,
+      },
+      select: { id: true, name: true, logoUrl: true },
+    });
+    return toBrandPartnerResponse(partner);
+  }
+
+  async updateBrandPartner(id: string, dto: UpdateBrandPartnerDto): Promise<BrandPartnerResponse> {
+    const existing = await this.prisma.brandPartner.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException(`Brand partner with ID '${id}' not found`);
+
+    const data: Prisma.BrandPartnerUpdateInput = {};
+    if (dto.name !== undefined) data.name = dto.name.trim();
+    if (dto.logo_url !== undefined) data.logoUrl = dto.logo_url;
+    if (dto.order !== undefined) data.sortOrder = dto.order;
+    if (dto.sort_order !== undefined) data.sortOrder = dto.sort_order;
+    if (dto.is_active !== undefined) data.isActive = dto.is_active;
+
+    const partner = await this.prisma.brandPartner.update({
+      where: { id },
+      data,
+      select: { id: true, name: true, logoUrl: true },
+    });
+    return toBrandPartnerResponse(partner);
+  }
+
+  async deleteBrandPartner(id: string): Promise<{ message: string }> {
+    const existing = await this.prisma.brandPartner.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException(`Brand partner with ID '${id}' not found`);
+    await this.prisma.brandPartner.delete({ where: { id } });
+    return { message: 'Brand partner deleted successfully' };
+  }
+
   async createLiveStream(dto: CreateLiveStreamDto): Promise<LiveStreamResponse> {
     const stream = await this.prisma.liveStream.create({
       data: {
@@ -374,6 +447,7 @@ export class ContentService {
         isOfficial: dto.is_official ?? false,
         imageUrl: dto.image_url,
         streamUrl: dto.stream_url,
+        ctaText: dto.cta_text?.trim() || 'Watch Now →',
         sortOrder: dto.order ?? 0,
       },
     });
@@ -393,6 +467,7 @@ export class ContentService {
     if (dto.is_official !== undefined) data.isOfficial = dto.is_official;
     if (dto.image_url !== undefined) data.imageUrl = dto.image_url;
     if (dto.stream_url !== undefined) data.streamUrl = dto.stream_url;
+    if (dto.cta_text !== undefined) data.ctaText = dto.cta_text.trim();
     if (dto.order !== undefined) data.sortOrder = dto.order;
 
     const stream = await this.prisma.liveStream.update({ where: { id }, data });

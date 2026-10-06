@@ -9,7 +9,9 @@ export class PartnersController {
 
   @Public()
   @Post('inquire')
-  submitInquiry(@Body() dto: CreatePartnerInquiryDto): Promise<{ message: string }> {
+  submitInquiry(
+    @Body() dto: CreatePartnerInquiryDto,
+  ): Promise<{ success: true; status: 'success'; message: string }> {
     return this.partnersService.createInquiry(dto);
   }
 }

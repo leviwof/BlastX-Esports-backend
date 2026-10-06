@@ -49,6 +49,13 @@ export interface LiveStreamResponse {
   is_official: boolean;
   image_url: string;
   stream_url: string;
+  cta_text: string;
+}
+
+export interface BrandPartnerResponse {
+  id: string;
+  name: string;
+  logo_url: string;
 }
 
 export const toBannerResponse = (banner: Banner): BannerResponse => ({
@@ -100,4 +107,15 @@ export const toLiveStreamResponse = (stream: LiveStream): LiveStreamResponse => 
   is_official: stream.isOfficial,
   image_url: stream.imageUrl,
   stream_url: stream.streamUrl,
+  cta_text: stream.ctaText,
+});
+
+export const toBrandPartnerResponse = (partner: {
+  id: string;
+  name: string;
+  logoUrl: string;
+}): BrandPartnerResponse => ({
+  id: partner.id,
+  name: partner.name,
+  logo_url: partner.logoUrl,
 });

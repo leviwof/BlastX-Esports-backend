@@ -93,6 +93,7 @@ describe('ContentService image uploads', () => {
               isOfficial: true,
               imageUrl: 'https://example.com/stream.png',
               streamUrl: 'https://youtube.com/live/abc',
+              ctaText: 'Watch Now →',
             },
           ]),
         },
@@ -110,8 +111,28 @@ describe('ContentService image uploads', () => {
           is_official: true,
           image_url: 'https://example.com/stream.png',
           stream_url: 'https://youtube.com/live/abc',
+          cta_text: 'Watch Now →',
         },
       ]);
+    });
+
+    it('returns active brand partners in configured order using the app contract', async () => {
+      const partners = [
+        { id: 'partner_1', name: 'Red Bull Gaming', logoUrl: 'https://example.com/redbull.png' },
+      ];
+      const prisma = {
+        brandPartner: { findMany: jest.fn().mockResolvedValue(partners) },
+      };
+      const service = new ContentService(prisma as never);
+
+      await expect(service.listHomePartners()).resolves.toEqual([
+        { id: 'partner_1', name: 'Red Bull Gaming', logo_url: 'https://example.com/redbull.png' },
+      ]);
+      expect(prisma.brandPartner.findMany).toHaveBeenCalledWith({
+        where: { isActive: true },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+        select: { id: true, name: true, logoUrl: true },
+      });
     });
   });
 
