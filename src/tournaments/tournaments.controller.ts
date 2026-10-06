@@ -92,10 +92,15 @@ export class TournamentsController {
   ): Promise<TournamentRegistrationResponse> {
     const registration = await this.tournamentsService.registerUserOrTeam(user.sub, id, dto);
     const response = toTournamentRegistrationResponse(registration);
+    const isWaitlist = registration.status === RegistrationStatus.WAITLIST;
     return {
       ...response,
+      status: 'success',
       success: true,
-      message: registration.teamId
+      registration_status: registration.status,
+      message: isWaitlist
+        ? 'Team registered on Waitlist. 4 main players required to enter match lobbies.'
+        : registration.teamId
         ? 'Team successfully registered for tournament'
         : 'Successfully registered for tournament',
       data: {

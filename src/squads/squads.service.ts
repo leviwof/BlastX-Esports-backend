@@ -16,6 +16,8 @@ import {
 import { randomBytes } from 'crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
+import { CreateSquadDto } from './dto/create-squad.dto';
+import { JoinSquadDto } from './dto/join-squad.dto';
 import { SwapSquadMembersDto } from './dto/swap-squad-members.dto';
 import { TransferSquadLeaderDto } from './dto/transfer-squad-leader.dto';
 import { UpdateSquadMemberRoleDto } from './dto/update-squad-member-role.dto';
@@ -51,13 +53,115 @@ export class SquadsService {
       where: { userId },
       select: { squadId: true },
     });
-    if (!membership) return { squad: null };
+    if (!membership) return { status: 'success', data: { squad: null } };
 
     const squad = await this.prisma.squad.findUnique({
       where: { id: membership.squadId },
       include: squadInclude,
     });
-    return { squad: squad ? this.toSquadResponse(squad) : null };
+    return { status: 'success', data: { squad: squad ? this.toSquadResponse(squad) : null } };
+  }
+
+  async createSquad(userId: string, dto: CreateSquadDto) {
+    const existingMembership = await this.prisma.squadMember.findUnique({
+      where: { userId },
+    });
+    if (existingMembership) {
+      if (existingMembership.role === SquadRole.LEADER || existingMembership.role === SquadRole.MANAGER) {
+        throw new BadRequestException('User is already a Leader or Manager of another squad');
+      }
+      throw new BadRequestException('User already belongs to a persistent squad');
+    }
+
+    const game = dto.game_slug
+      ? await this.prisma.game.findFirst({ where: { slug: dto.game_slug } })
+      : await this.prisma.game.findFirst();
+    if (!game) throw new BadRequestException('Game not found');
+
+    const ownerRole = dto.owner_role ?? OwnerRole.LEADER;
+    const squadRole = ownerRole === OwnerRole.MANAGER ? SquadRole.MANAGER : SquadRole.LEADER;
+
+    const squad = await this.prisma.squad.create({
+      data: {
+        gameId: game.id,
+        name: dto.name.trim(),
+        tag: dto.tag?.trim() || '',
+        leaderId: userId,
+        ownerRole: ownerRole,
+        maxMainPlayers: 4,
+        maxSubstitutes: 2,
+        members: {
+          create: {
+            userId,
+            role: squadRole,
+            rosterType: SquadRosterType.MAIN,
+          },
+        },
+      },
+      include: squadInclude,
+    });
+
+    return {
+      status: 'success',
+      message: 'Squad created successfully',
+      data: {
+        squad: this.toSquadResponse(squad),
+      },
+    };
+  }
+
+  async joinSquad(userId: string, dto: JoinSquadDto) {
+    const existingMembership = await this.prisma.squadMember.findUnique({
+      where: { userId },
+    });
+    if (existingMembership) {
+      throw new BadRequestException('You already belong to a persistent squad');
+    }
+
+    const code = dto.squad_code.trim();
+    const squad = await this.prisma.squad.findFirst({
+      where: {
+        OR: [
+          { id: code },
+          { name: { equals: code, mode: 'insensitive' } },
+        ],
+      },
+      include: squadInclude,
+    });
+    if (!squad) {
+      throw new NotFoundException(`Squad '${dto.squad_code}' not found`);
+    }
+
+    const mainCount = squad.members.filter((m) => m.rosterType === SquadRosterType.MAIN).length;
+    const subCount = squad.members.filter((m) => m.rosterType === SquadRosterType.SUBSTITUTE).length;
+
+    if (mainCount >= squad.maxMainPlayers && subCount >= squad.maxSubstitutes) {
+      throw new BadRequestException('Squad roster is full (4 Main + 2 Substitutes max)');
+    }
+
+    const rosterType = mainCount < squad.maxMainPlayers ? SquadRosterType.MAIN : SquadRosterType.SUBSTITUTE;
+
+    await this.prisma.squadMember.create({
+      data: {
+        squadId: squad.id,
+        userId,
+        role: SquadRole.MEMBER,
+        rosterType,
+      },
+    });
+
+    const updated = await this.prisma.squad.findUnique({
+      where: { id: squad.id },
+      include: squadInclude,
+    });
+
+    return {
+      status: 'success',
+      message: 'Joined squad successfully',
+      data: {
+        squad: updated ? this.toSquadResponse(updated) : null,
+      },
+    };
   }
 
   async saveMyRegisteredSquad(userId: string) {

@@ -444,7 +444,26 @@ export class TournamentsService {
         throw new BadRequestException('Team is not configured for this game');
       }
       if (team.captainId !== userId) {
-        throw new BadRequestException('Only the team captain can register the team for a tournament');
+        throw new ForbiddenException({
+          status: 'error',
+          error_code: 'NON_LEADER_REGISTRATION_FORBIDDEN',
+          message: 'please ask team leader to register the tournament',
+        });
+      }
+
+      const userSquadMember = await this.prisma.squadMember.findUnique({
+        where: { userId },
+      });
+      if (
+        userSquadMember &&
+        userSquadMember.role !== SquadRole.LEADER &&
+        userSquadMember.role !== SquadRole.MANAGER
+      ) {
+        throw new ForbiddenException({
+          status: 'error',
+          error_code: 'NON_LEADER_REGISTRATION_FORBIDDEN',
+          message: 'please ask team leader to register the tournament',
+        });
       }
 
       const mainMembers = team.members.filter(
