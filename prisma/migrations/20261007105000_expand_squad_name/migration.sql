@@ -1,0 +1,2 @@
+ALTER TABLE "squads"
+    ALTER COLUMN "name" TYPE VARCHAR(100);

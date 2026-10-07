@@ -21,6 +21,7 @@ describe('SquadsService', () => {
         count: jest.fn().mockResolvedValue(0),
         findUnique: jest.fn(),
         update: jest.fn(),
+        delete: jest.fn(),
         deleteMany: jest.fn(),
       },
       squad: { update: jest.fn() },
@@ -32,7 +33,8 @@ describe('SquadsService', () => {
       squadMember: {
         findUnique: jest.fn(),
         update: jest.fn(),
-        count: jest.fn(),
+        delete: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
       },
       squad: {
         findUnique: jest.fn(),
@@ -42,6 +44,7 @@ describe('SquadsService', () => {
       team: {
         findUnique: jest.fn(),
         findFirst: jest.fn(),
+        findMany: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
         upsert: jest.fn(),
@@ -61,6 +64,12 @@ describe('SquadsService', () => {
       },
       tournamentRegistration: { findFirst: jest.fn() },
       teamMember: { findFirst: jest.fn() },
+      tournamentWaitlist: {
+        findUnique: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
+        upsert: jest.fn(),
+        updateMany: jest.fn(),
+      },
       $transaction: jest.fn(async (cbOrArr: any) => {
         if (typeof cbOrArr === 'function') {
           return cbOrArr(tx);
@@ -78,7 +87,7 @@ describe('SquadsService', () => {
 
     await expect(service.getMySquad('user-1')).resolves.toEqual({
       status: 'success',
-      data: { squad: null },
+      squad: null,
     });
   });
 
@@ -117,8 +126,7 @@ describe('SquadsService', () => {
 
     await expect(service.getMySquad('leader-1')).resolves.toEqual({
       status: 'success',
-      data: {
-        squad: {
+      squad: {
           id: 'squad-1',
           name: 'ALPHA ELITE',
           tag: 'AEL',
@@ -131,7 +139,6 @@ describe('SquadsService', () => {
           members: [
             {
               user_id: 'leader-1',
-              name: 'Phoenix Captain',
               role: 'LEADER',
               roster_type: 'MAIN',
               joined_at: joinedAt,
@@ -146,17 +153,129 @@ describe('SquadsService', () => {
               },
             },
           ],
-        },
       },
     });
   });
 
-  it('enforces leader-only squad management', async () => {
+  it('rejects management actions from a regular member', async () => {
     prisma.squad.findUnique.mockResolvedValue({ id: 'squad-1', leaderId: 'leader-1' });
+    prisma.squadMember.findUnique.mockResolvedValue({
+      squadId: 'squad-1',
+      role: SquadRole.MEMBER,
+    });
 
     await expect(service.removeMember('other-user', 'squad-1', 'member-1')).rejects.toBeInstanceOf(
       ForbiddenException,
     );
+  });
+
+  it('allows a manager to promote a regular member to manager', async () => {
+    const squad = {
+      id: 'squad-1',
+      name: 'Arena Squad',
+      tag: 'AS',
+      logoUrl: null,
+      leaderId: 'leader-1',
+      ownerRole: 'LEADER',
+      maxMainPlayers: 4,
+      maxSubstitutes: 2,
+      createdAt: new Date('2026-02-15T10:00:00.000Z'),
+      game: { id: 'game-1', slug: 'free_fire', name: 'Free Fire' },
+      members: [],
+    };
+    prisma.squad.findUnique
+      .mockResolvedValueOnce(squad)
+      .mockResolvedValueOnce({ maxMainPlayers: 4 })
+      .mockResolvedValueOnce(squad);
+    prisma.squadMember.findUnique.mockImplementation(({ where }: any) =>
+      Promise.resolve(
+        where.userId === 'manager-1'
+          ? { squadId: 'squad-1', role: SquadRole.MANAGER }
+          : {
+              id: 'member-row',
+              squadId: 'squad-1',
+              userId: 'player-1',
+              role: SquadRole.MEMBER,
+              rosterType: SquadRosterType.MAIN,
+            },
+      ),
+    );
+
+    await expect(
+      service.updateMemberRole('manager-1', 'squad-1', 'player-1', {
+        role: SquadRole.MANAGER,
+      }),
+    ).resolves.toMatchObject({ status: 'success' });
+    expect(prisma.tx.squadMember.update).toHaveBeenCalledWith({
+      where: { userId: 'player-1' },
+      data: { role: SquadRole.MANAGER },
+    });
+  });
+
+  it('allows a regular member to leave and returns the specified message', async () => {
+    prisma.squadMember.findUnique.mockResolvedValue({
+      id: 'member-row',
+      squadId: 'squad-1',
+      role: SquadRole.MEMBER,
+    });
+    prisma.squad.findUnique.mockResolvedValue({ maxMainPlayers: 4 });
+
+    await expect(service.leaveSquad('member-1', 'squad-1')).resolves.toEqual({
+      status: 'success',
+      message: 'You have left the squad successfully.',
+    });
+    expect(prisma.squadMember.delete).toHaveBeenCalledWith({ where: { id: 'member-row' } });
+  });
+
+  it.each([SquadRole.LEADER, SquadRole.MANAGER])(
+    'prevents a %s from leaving directly',
+    async (role) => {
+      prisma.squadMember.findUnique.mockResolvedValue({
+        id: 'owner-row',
+        squadId: 'squad-1',
+        role,
+      });
+
+      await expect(service.leaveSquad('owner-1', 'squad-1')).rejects.toThrow(
+        'Leader or Manager cannot leave team. Transfer ownership first.',
+      );
+      expect(prisma.squadMember.delete).not.toHaveBeenCalled();
+    },
+  );
+
+  it('reports a roster-incomplete waitlist status and excludes managers from player counts', async () => {
+    prisma.squad.findUnique.mockResolvedValue({
+      id: 'squad-1',
+      maxMainPlayers: 4,
+      maxSubstitutes: 2,
+      members: [
+        { role: SquadRole.LEADER, rosterType: SquadRosterType.MAIN },
+        { role: SquadRole.MEMBER, rosterType: SquadRosterType.MAIN },
+        { role: SquadRole.MEMBER, rosterType: SquadRosterType.MAIN },
+        { role: SquadRole.MEMBER, rosterType: SquadRosterType.SUBSTITUTE },
+        { role: SquadRole.MANAGER, rosterType: SquadRosterType.MAIN },
+      ],
+    });
+    prisma.squadMember.findUnique.mockResolvedValue({ squadId: 'squad-1' });
+    prisma.team.findFirst.mockResolvedValue({
+      id: 'team-1',
+      tournamentId: 'tournament-1',
+      tournament: { id: 'tournament-1', title: 'BlastX Grand Invitational S4' },
+    });
+    prisma.tournamentWaitlist.findUnique.mockResolvedValue({ positionInQueue: 3 });
+
+    await expect(service.getWaitlistStatus('player-1', 'squad-1')).resolves.toEqual({
+      status: 'success',
+      waitlist: {
+        status: 'WAITLISTED',
+        tournament_name: 'BlastX Grand Invitational S4',
+        position_in_queue: 3,
+        main_players_count: 3,
+        required_main_players: 4,
+        substitutes_count: 1,
+        message: 'Team is on waitlist. 4 main players required to enter match lobby.',
+      },
+    });
   });
 
   it('prevents promoting into a full main roster', async () => {
@@ -166,13 +285,19 @@ describe('SquadsService', () => {
       maxMainPlayers: 4,
       maxSubstitutes: 2,
     });
-    prisma.squadMember.findUnique.mockResolvedValue({
-      id: 'member-row',
-      squadId: 'squad-1',
-      userId: 'member-1',
-      role: SquadRole.MEMBER,
-      rosterType: SquadRosterType.SUBSTITUTE,
-    });
+    prisma.squadMember.findUnique.mockImplementation(({ where }: any) =>
+      Promise.resolve(
+        where.userId === 'leader-1'
+          ? { squadId: 'squad-1', role: SquadRole.LEADER }
+          : {
+              id: 'member-row',
+              squadId: 'squad-1',
+              userId: 'member-1',
+              role: SquadRole.MEMBER,
+              rosterType: SquadRosterType.SUBSTITUTE,
+            },
+      ),
+    );
     prisma.tx.squadMember.count.mockResolvedValue(4);
 
     await expect(
@@ -184,6 +309,7 @@ describe('SquadsService', () => {
   });
 
   it('rejecting an invitation removes the player from the persistent squad and notifies its leader', async () => {
+    prisma.squad.findUnique.mockResolvedValue({ maxMainPlayers: 4 });
     prisma.tournamentInvitation.findUnique.mockResolvedValue({
       id: 'invite-1',
       squadId: 'squad-1',
@@ -296,6 +422,13 @@ describe('SquadsService', () => {
     prisma.teamMember.findFirst.mockResolvedValue(null);
     prisma.team.findUnique.mockResolvedValue(null);
     prisma.team.upsert.mockResolvedValue({ id: 'team-mgr-1' });
+    prisma.squadMember.findUnique.mockResolvedValue({
+      squadId: 'squad-mgr',
+      role: SquadRole.MANAGER,
+      user: { isActive: true },
+    });
+    prisma.tournamentWaitlist.findUnique.mockResolvedValue(null);
+    prisma.tournamentWaitlist.upsert.mockResolvedValue({});
     prisma.tournamentInvitation.createMany = jest.fn().mockResolvedValue({ count: 4 });
     prisma.tournamentInvitation.findMany.mockResolvedValue([
       { id: 'inv-1', squadId: 'squad-mgr', tournamentId: 'tourney-1', teamId: 'team-mgr-1', leaderId: 'mgr-1', inviteeUserId: 'p-1', status: 'PENDING', createdAt: new Date(), invitee: { id: 'p-1', name: 'Player 1' } },
@@ -323,6 +456,68 @@ describe('SquadsService', () => {
       ]),
       skipDuplicates: true,
     });
+    expect(prisma.tournamentWaitlist.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          tournamentId: 'tourney-1',
+          squadId: 'squad-mgr',
+          positionInQueue: 1,
+          status: 'CONFIRMED',
+        }),
+      }),
+    );
     expect(res.invitations.length).toBe(4);
+  });
+
+  it('allows a squad manager to invite players for a leader-owned squad', async () => {
+    prisma.squad.findUnique.mockResolvedValue({
+      id: 'squad-1',
+      gameId: 'game-1',
+      name: 'Managed Squad',
+      tag: 'MS',
+      logoUrl: null,
+      leaderId: 'leader-1',
+      ownerRole: 'LEADER',
+      maxMainPlayers: 4,
+      maxSubstitutes: 2,
+      game: { id: 'game-1', slug: 'free_fire', name: 'Free Fire' },
+      members: [
+        { userId: 'leader-1', role: 'LEADER', rosterType: 'MAIN', user: { id: 'leader-1', name: 'Leader', isActive: true } },
+        { userId: 'manager-1', role: 'MANAGER', rosterType: 'MAIN', user: { id: 'manager-1', name: 'Manager', isActive: true } },
+        { userId: 'p-1', role: 'MEMBER', rosterType: 'MAIN', user: { id: 'p-1', name: 'Player 1', isActive: true } },
+        { userId: 'p-2', role: 'MEMBER', rosterType: 'MAIN', user: { id: 'p-2', name: 'Player 2', isActive: true } },
+        { userId: 'p-3', role: 'MEMBER', rosterType: 'MAIN', user: { id: 'p-3', name: 'Player 3', isActive: true } },
+      ],
+    });
+    prisma.tournament.findUnique.mockResolvedValue({
+      id: 'tourney-1',
+      title: 'Arena Cup',
+      gameId: 'game-1',
+      status: TournamentStatus.LIVE,
+    });
+    prisma.squadMember.findUnique.mockResolvedValue({
+      squadId: 'squad-1',
+      role: SquadRole.MANAGER,
+      user: { isActive: true },
+    });
+    prisma.gameProfile.count.mockResolvedValue(4);
+    prisma.tournamentRegistration.findFirst.mockResolvedValue(null);
+    prisma.teamMember.findFirst.mockResolvedValue(null);
+    prisma.team.findUnique.mockResolvedValue(null);
+    prisma.team.upsert.mockResolvedValue({ id: 'team-1' });
+    prisma.tournamentInvitation.createMany.mockResolvedValue({ count: 3 });
+    prisma.tournamentInvitation.findMany.mockResolvedValue([]);
+    prisma.tournamentWaitlist.upsert.mockResolvedValue({});
+
+    await service.inviteSquadToTournament('manager-1', 'squad-1', 'tourney-1');
+
+    expect(prisma.tournamentInvitation.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({ inviteeUserId: 'p-1', leaderId: 'leader-1' }),
+        expect.objectContaining({ inviteeUserId: 'p-2', leaderId: 'leader-1' }),
+        expect.objectContaining({ inviteeUserId: 'p-3', leaderId: 'leader-1' }),
+      ]),
+      skipDuplicates: true,
+    });
   });
 });

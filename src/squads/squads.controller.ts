@@ -1,4 +1,14 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+} from '@nestjs/common';
 import { CurrentUser, JwtUser } from '../common/current-user.decorator';
 import { SquadsService } from './squads.service';
 import { CreateSquadDto } from './dto/create-squad.dto';
@@ -12,7 +22,10 @@ export class SquadsController {
   constructor(private readonly squads: SquadsService) {}
 
   @Post()
-  createOrSaveSquad(@CurrentUser() user: JwtUser, @Body() dto?: CreateSquadDto) {
+  createOrSaveSquad(
+    @CurrentUser() user: JwtUser,
+    @Body() dto?: CreateSquadDto,
+  ) {
     if (dto && dto.name) {
       return this.squads.createSquad(user.sub, dto);
     }
@@ -29,6 +42,30 @@ export class SquadsController {
     return this.squads.getMySquad(user.sub);
   }
 
+  @Post(':squadId/leave')
+  @HttpCode(HttpStatus.OK)
+  leaveSquad(@CurrentUser() user: JwtUser, @Param('squadId') squadId: string) {
+    return this.squads.leaveSquad(user.sub, squadId);
+  }
+
+  @Get(':squadId/waitlist')
+  getWaitlistStatus(
+    @CurrentUser() user: JwtUser,
+    @Param('squadId') squadId: string,
+  ) {
+    return this.squads.getWaitlistStatus(user.sub, squadId);
+  }
+
+  @Post(':squadId/members/:userId/remove')
+  @HttpCode(HttpStatus.OK)
+  removeMemberFromSquad(
+    @CurrentUser() user: JwtUser,
+    @Param('squadId') squadId: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.squads.removeMember(user.sub, squadId, userId);
+  }
+
   @Delete(':squadId/members/:userId')
   removeMember(
     @CurrentUser() user: JwtUser,
@@ -39,6 +76,7 @@ export class SquadsController {
   }
 
   @Post(':squadId/members/:userId')
+  @HttpCode(HttpStatus.OK)
   removeMemberPost(
     @CurrentUser() user: JwtUser,
     @Param('squadId') squadId: string,
@@ -48,6 +86,7 @@ export class SquadsController {
   }
 
   @Post(':squadId/remove-member')
+  @HttpCode(HttpStatus.OK)
   removeMemberBody(
     @CurrentUser() user: JwtUser,
     @Param('squadId') squadId: string,
@@ -57,6 +96,7 @@ export class SquadsController {
   }
 
   @Post(':squadId/transfer-leader')
+  @HttpCode(HttpStatus.OK)
   transferLeader(
     @CurrentUser() user: JwtUser,
     @Param('squadId') squadId: string,
@@ -66,12 +106,15 @@ export class SquadsController {
   }
 
   @Post(':squadId/transfer-leadership')
+  @HttpCode(HttpStatus.OK)
   transferLeadership(
     @CurrentUser() user: JwtUser,
     @Param('squadId') squadId: string,
     @Body('new_leader_id') newLeaderId: string,
   ) {
-    return this.squads.transferLeader(user.sub, squadId, { new_leader_id: newLeaderId });
+    return this.squads.transferLeader(user.sub, squadId, {
+      new_leader_id: newLeaderId,
+    });
   }
 
   @Patch(':squadId/members/:userId/role')
@@ -85,6 +128,7 @@ export class SquadsController {
   }
 
   @Post(':squadId/swap')
+  @HttpCode(HttpStatus.OK)
   swapMembers(
     @CurrentUser() user: JwtUser,
     @Param('squadId') squadId: string,
@@ -94,6 +138,7 @@ export class SquadsController {
   }
 
   @Post(':squadId/swap-members')
+  @HttpCode(HttpStatus.OK)
   swapMembersBody(
     @CurrentUser() user: JwtUser,
     @Param('squadId') squadId: string,

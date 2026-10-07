@@ -139,21 +139,30 @@ This document provides the complete API specification with exact Request paramet
 
 All squad and invitation routes require the authenticated user's bearer token.
 A four-main-player SQUAD tournament roster is saved as the player's persistent
-squad after successful tournament registration.
+squad after successful tournament registration. A MANAGER is an administrative
+role and is excluded from the four main-player and two substitute slot counts.
 
-- `GET /squads/me` returns `{ "status": "success", "data": { "squad": null } }`
-  when the user has no squad, or the same success envelope containing a squad
-  object with leader, roster limits, creation timestamp, and members including
-  each member's game profile.
+- `GET /squads/me` returns `{ "status": "success", "squad": null }` when the
+  user has no squad, or the same success envelope containing a squad object with
+  leader, roster limits, creation timestamp, and members including each
+  member's game profile.
 - `POST /squads` idempotently ensures that the authenticated leader's most
   recent confirmed SQUAD tournament roster is saved. The backend derives the
   roster from the registration rather than trusting member IDs from the client.
-- `POST /squads/:squadId/members/:userId` removes a member (leader only).
-- `POST /squads/:squadId/transfer-leader` accepts `{ "new_leader_id": "..." }`.
+- `POST /squads/:squadId/leave` lets a regular member leave; leaders and managers
+  must transfer ownership first.
+- `POST /squads/:squadId/members/:userId/remove` removes a regular member
+  (leader/manager only).
+- `POST /squads/:squadId/transfer-leader` accepts
+  `{ "new_leader_id": "..." }` and transfers leadership or manager ownership.
 - `PATCH /squads/:squadId/members/:userId/role` accepts
-  `{ "roster_type": "MAIN" }` or `{ "roster_type": "SUBSTITUTE" }`.
+  `{ "roster_type": "MAIN" | "SUBSTITUTE" }` and/or
+  `{ "role": "MANAGER" | "MEMBER" }`.
 - `POST /squads/:squadId/swap` accepts
   `{ "main_user_id": "...", "sub_user_id": "..." }`.
+- `GET /squads/:squadId/waitlist` returns roster counts and queue status for
+  the most recently linked LIVE tournament. Queue position is assigned when a
+  squad lobby is first created for that tournament.
 - `POST /squads/:squadId/tournaments/:tournamentId/invite` creates or returns
   the tournament lobby and sends invitations to the three other active main
   players. Invites are only sent while the tournament status is `LIVE`.

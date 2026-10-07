@@ -67,6 +67,11 @@ describe('Teams & Tournaments Features', () => {
         aggregate: jest.fn().mockResolvedValue({ _max: { slotNumber: 1 } }),
         create: jest.fn(),
       },
+      tournamentWaitlist: {
+        findUnique: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
+        upsert: jest.fn(),
+      },
       $transaction: jest.fn(async (cbOrArr) => {
         if (typeof cbOrArr === 'function') {
           return cbOrArr(mockPrisma);

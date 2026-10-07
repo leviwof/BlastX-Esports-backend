@@ -1,10 +1,16 @@
-import { IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsEnum,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { OwnerRole } from '@prisma/client';
 
 export class CreateSquadDto {
   @IsString()
   @MinLength(3, { message: 'Squad name must be at least 3 characters' })
-  @MaxLength(30, { message: 'Squad name must be under 30 characters' })
+  @MaxLength(100, { message: 'Squad name must be under 100 characters' })
   name: string;
 
   @IsOptional()

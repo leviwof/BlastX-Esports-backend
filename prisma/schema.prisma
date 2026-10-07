@@ -42,6 +42,12 @@ enum TournamentInvitationStatus {
   EXPIRED
 }
 
+enum TournamentWaitlistStatus {
+  WAITLISTED
+  CONFIRMED
+  CANCELLED
+}
+
 enum TournamentFormat {
   BATTLE_ROYALE
   CLASH_SQUAD
@@ -246,6 +252,7 @@ model Tournament {
   registrations         TournamentRegistration[]
   matches               Match[]
   tournamentInvitations TournamentInvitation[]
+  tournamentWaitlists   TournamentWaitlist[]
 
   @@index([gameId, status, startsAt])
   @@index([section, status, startsAt])
@@ -255,7 +262,7 @@ model Tournament {
 model Squad {
   id             String    @id @default(cuid())
   gameId         String    @map("game_id")
-  name           String    @db.VarChar(50)
+  name           String    @db.VarChar(100)
   tag            String    @default("") @db.VarChar(10)
   logoUrl        String?   @map("logo_url") @db.VarChar(255)
   leaderId       String    @map("leader_id")
@@ -270,6 +277,7 @@ model Squad {
   members     SquadMember[]
   teams       Team[]
   invitations TournamentInvitation[]
+  waitlists   TournamentWaitlist[]
 
   @@unique([gameId, leaderId], map: "squads_game_leader_key")
   @@index([leaderId])
@@ -313,6 +321,23 @@ model TournamentInvitation {
   @@index([inviteeUserId, status, createdAt])
   @@index([tournamentId, status])
   @@map("tournament_invitations")
+}
+
+model TournamentWaitlist {
+  id              String                   @id @default(cuid())
+  tournamentId    String                   @map("tournament_id")
+  squadId         String                   @map("squad_id")
+  positionInQueue Int                      @map("position_in_queue")
+  status          TournamentWaitlistStatus @default(WAITLISTED)
+  createdAt       DateTime                 @default(now()) @map("created_at")
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  squad      Squad      @relation(fields: [squadId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, squadId], map: "tournament_waitlists_tournament_squad_key")
+  @@index([tournamentId, status, positionInQueue], map: "tournament_waitlists_queue_idx")
+  @@index([squadId], map: "tournament_waitlists_squad_idx")
+  @@map("tournament_waitlists")
 }
 
 model TournamentRegistration {

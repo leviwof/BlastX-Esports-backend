@@ -53,13 +53,13 @@ export class SquadsService {
       where: { userId },
       select: { squadId: true },
     });
-    if (!membership) return { status: 'success', data: { squad: null } };
+    if (!membership) return { status: 'success', squad: null };
 
     const squad = await this.prisma.squad.findUnique({
       where: { id: membership.squadId },
       include: squadInclude,
     });
-    return { status: 'success', data: { squad: squad ? this.toSquadResponse(squad) : null } };
+    return { status: 'success', squad: squad ? this.toSquadResponse(squad) : null };
   }
 
   async createSquad(userId: string, dto: CreateSquadDto) {
@@ -103,10 +103,7 @@ export class SquadsService {
 
     return {
       status: 'success',
-      message: 'Squad created successfully',
-      data: {
-        squad: this.toSquadResponse(squad),
-      },
+      squad: this.toSquadResponse(squad),
     };
   }
 
@@ -132,8 +129,9 @@ export class SquadsService {
       throw new NotFoundException(`Squad '${dto.squad_code}' not found`);
     }
 
-    const mainCount = squad.members.filter((m) => m.rosterType === SquadRosterType.MAIN).length;
-    const subCount = squad.members.filter((m) => m.rosterType === SquadRosterType.SUBSTITUTE).length;
+    const players = squad.members.filter((member) => member.role !== SquadRole.MANAGER);
+    const mainCount = players.filter((member) => member.rosterType === SquadRosterType.MAIN).length;
+    const subCount = players.filter((member) => member.rosterType === SquadRosterType.SUBSTITUTE).length;
 
     if (mainCount >= squad.maxMainPlayers && subCount >= squad.maxSubstitutes) {
       throw new BadRequestException('Squad roster is full (4 Main + 2 Substitutes max)');
@@ -149,6 +147,7 @@ export class SquadsService {
         rosterType,
       },
     });
+    await this.syncLiveWaitlistStatus(squad.id);
 
     const updated = await this.prisma.squad.findUnique({
       where: { id: squad.id },
@@ -166,7 +165,7 @@ export class SquadsService {
 
   async saveMyRegisteredSquad(userId: string) {
     const current = await this.getMySquad(userId);
-    if (current.data.squad) return current;
+    if (current.squad) return current;
 
     const registration = await this.prisma.tournamentRegistration.findFirst({
       where: {
@@ -197,6 +196,7 @@ export class SquadsService {
     }
     if (registration.team.persistentSquadId) {
       return {
+        status: 'success',
         squad: await this.getSquadById(registration.team.persistentSquadId),
       };
     }
@@ -210,7 +210,7 @@ export class SquadsService {
       },
     });
     if (existingSquad) {
-      return { squad: await this.getSquadById(existingSquad.id) };
+      return { status: 'success', squad: await this.getSquadById(existingSquad.id) };
     }
 
     const memberIds = registration.team.members.map((member) => member.userId);
@@ -261,8 +261,8 @@ export class SquadsService {
   }
 
   async removeMember(leaderId: string, squadId: string, userId: string) {
-    const squad = await this.requireLeader(leaderId, squadId);
-    if (userId === squad.leaderId) {
+    const squad = await this.requireManagementRole(leaderId, squadId);
+    if (userId === squad.leaderId || userId === leaderId) {
       throw new BadRequestException({
         code: 'LEADER_MUST_TRANSFER',
         message: 'The squad leader must transfer leadership before leaving the squad',
@@ -270,10 +270,13 @@ export class SquadsService {
     }
     const member = await this.prisma.squadMember.findUnique({
       where: { userId },
-      select: { id: true, squadId: true },
+      select: { id: true, squadId: true, role: true },
     });
     if (!member || member.squadId !== squadId) {
       throw new NotFoundException('User is not a member of this squad');
+    }
+    if (member.role === SquadRole.MANAGER || member.role === SquadRole.LEADER) {
+      throw new BadRequestException('Managers and leaders cannot be removed as players');
     }
 
     await this.prisma.$transaction([
@@ -287,7 +290,45 @@ export class SquadsService {
       }),
       this.prisma.squadMember.delete({ where: { id: member.id } }),
     ]);
-    return { message: 'Member removed from squad' };
+    await this.syncLiveWaitlistStatus(squadId);
+    return {
+      status: 'success',
+      message: 'Member removed from squad.',
+      squad: await this.getSquadById(squadId),
+    };
+  }
+
+  async leaveSquad(userId: string, squadId: string) {
+    const member = await this.prisma.squadMember.findUnique({
+      where: { userId },
+      select: { id: true, squadId: true, role: true },
+    });
+    if (!member || member.squadId !== squadId) {
+      throw new NotFoundException('User is not a member of this squad');
+    }
+    if (member.role !== SquadRole.MEMBER) {
+      throw new BadRequestException(
+        'Leader or Manager cannot leave team. Transfer ownership first.',
+      );
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.tournamentInvitation.updateMany({
+        where: {
+          squadId,
+          inviteeUserId: userId,
+          status: TournamentInvitationStatus.PENDING,
+        },
+        data: { status: TournamentInvitationStatus.REJECTED },
+      }),
+      this.prisma.squadMember.delete({ where: { id: member.id } }),
+    ]);
+    await this.syncLiveWaitlistStatus(squadId);
+
+    return {
+      status: 'success',
+      message: 'You have left the squad successfully.',
+    };
   }
 
   async transferLeader(
@@ -295,8 +336,8 @@ export class SquadsService {
     squadId: string,
     dto: TransferSquadLeaderDto,
   ) {
-    const squad = await this.requireLeader(leaderId, squadId);
-    if (dto.new_leader_id === leaderId) {
+    const squad = await this.requireManagementRole(leaderId, squadId);
+    if (dto.new_leader_id === squad.leaderId) {
       throw new BadRequestException('User is already the squad leader');
     }
     const target = await this.prisma.squadMember.findUnique({
@@ -306,20 +347,40 @@ export class SquadsService {
       throw new NotFoundException('New leader must be a member of this squad');
     }
 
+    const newOwnerRole =
+      squad.ownerRole === OwnerRole.MANAGER ? SquadRole.MANAGER : SquadRole.LEADER;
     await this.prisma.$transaction(async (tx) => {
-      if (target.rosterType === SquadRosterType.SUBSTITUTE) {
+      const previousOwner = await tx.squadMember.findUnique({
+        where: { userId: squad.leaderId },
+      });
+      if (!previousOwner) {
+        throw new NotFoundException('Current squad owner is not a member of this squad');
+      }
+
+      if (
+        newOwnerRole === SquadRole.LEADER &&
+        (target.role === SquadRole.MANAGER || target.rosterType === SquadRosterType.SUBSTITUTE)
+      ) {
         const mainCount = await tx.squadMember.count({
-          where: { squadId, rosterType: SquadRosterType.MAIN },
+          where: {
+            squadId,
+            rosterType: SquadRosterType.MAIN,
+            role: { not: SquadRole.MANAGER },
+          },
         });
         if (mainCount >= squad.maxMainPlayers) {
           const substituteCount = await tx.squadMember.count({
-            where: { squadId, rosterType: SquadRosterType.SUBSTITUTE },
+            where: {
+              squadId,
+              rosterType: SquadRosterType.SUBSTITUTE,
+              role: { not: SquadRole.MANAGER },
+            },
           });
           if (substituteCount >= squad.maxSubstitutes) {
             throw new BadRequestException('No roster slot is available for the new leader');
           }
           await tx.squadMember.update({
-            where: { userId: leaderId },
+            where: { userId: squad.leaderId },
             data: { rosterType: SquadRosterType.SUBSTITUTE },
           });
         }
@@ -327,10 +388,51 @@ export class SquadsService {
           where: { userId: dto.new_leader_id },
           data: { rosterType: SquadRosterType.MAIN },
         });
+      } else if (newOwnerRole === SquadRole.MANAGER && previousOwner.role === SquadRole.MANAGER) {
+        const mainCount = await tx.squadMember.count({
+          where: {
+            squadId,
+            rosterType: SquadRosterType.MAIN,
+            role: { not: SquadRole.MANAGER },
+            NOT: { userId: dto.new_leader_id },
+          },
+        });
+        const substituteCount = await tx.squadMember.count({
+          where: {
+            squadId,
+            rosterType: SquadRosterType.SUBSTITUTE,
+            role: { not: SquadRole.MANAGER },
+            NOT: { userId: dto.new_leader_id },
+          },
+        });
+        const countAtOwnerSlot =
+          previousOwner.rosterType === SquadRosterType.MAIN ? mainCount : substituteCount;
+        const capacityAtOwnerSlot =
+          previousOwner.rosterType === SquadRosterType.MAIN
+            ? squad.maxMainPlayers
+            : squad.maxSubstitutes;
+        if (countAtOwnerSlot >= capacityAtOwnerSlot) {
+          const otherRosterType =
+            previousOwner.rosterType === SquadRosterType.MAIN
+              ? SquadRosterType.SUBSTITUTE
+              : SquadRosterType.MAIN;
+          const countAtOtherSlot =
+            previousOwner.rosterType === SquadRosterType.MAIN ? substituteCount : mainCount;
+          const capacityAtOtherSlot =
+            otherRosterType === SquadRosterType.MAIN
+              ? squad.maxMainPlayers
+              : squad.maxSubstitutes;
+          if (countAtOtherSlot >= capacityAtOtherSlot) {
+            throw new BadRequestException('No roster slot is available for the former squad manager');
+          }
+          await tx.squadMember.update({
+            where: { userId: squad.leaderId },
+            data: { rosterType: otherRosterType },
+          });
+        }
       }
-      const newOwnerRole = squad.ownerRole === OwnerRole.MANAGER ? SquadRole.MANAGER : SquadRole.LEADER;
       await tx.squadMember.update({
-        where: { userId: leaderId },
+        where: { userId: squad.leaderId },
         data: { role: SquadRole.MEMBER },
       });
       await tx.squadMember.update({
@@ -342,11 +444,16 @@ export class SquadsService {
         data: { leaderId: dto.new_leader_id },
       });
     }, { isolationLevel: 'Serializable' });
+    await this.syncLiveWaitlistStatus(squadId);
     const updated = await this.prisma.squad.findUnique({
       where: { id: squadId },
       include: squadInclude,
     });
-    return updated ? this.toSquadResponse(updated) : null;
+    return {
+      status: 'success',
+      message: 'Leadership transferred successfully.',
+      squad: updated ? this.toSquadResponse(updated) : null,
+    };
   }
 
   async updateMemberRole(
@@ -355,45 +462,76 @@ export class SquadsService {
     userId: string,
     dto: UpdateSquadMemberRoleDto,
   ) {
-    const squad = await this.requireLeader(leaderId, squadId);
+    const squad = await this.requireManagementRole(leaderId, squadId);
+    if (dto.roster_type === undefined && dto.role === undefined) {
+      throw new BadRequestException('At least one of role or roster_type is required');
+    }
     const member = await this.prisma.squadMember.findUnique({ where: { userId } });
     if (!member || member.squadId !== squadId) {
       throw new NotFoundException('User is not a member of this squad');
     }
-    if (member.role === SquadRole.LEADER && dto.roster_type !== SquadRosterType.MAIN) {
+    if (member.role === SquadRole.LEADER && dto.role !== undefined) {
+      throw new BadRequestException('Transfer leadership before changing the leader role');
+    }
+    if (member.userId === squad.leaderId && dto.role !== undefined) {
+      throw new BadRequestException('Transfer ownership before changing the owner role');
+    }
+    if (dto.role === SquadRole.LEADER) {
+      throw new BadRequestException('Use the transfer-leader endpoint to transfer leadership');
+    }
+    if (
+      member.role === SquadRole.LEADER &&
+      dto.roster_type !== undefined &&
+      dto.roster_type !== SquadRosterType.MAIN
+    ) {
       throw new BadRequestException('The squad leader must remain in the main roster');
     }
+    if (member.role === SquadRole.MANAGER && dto.roster_type !== undefined) {
+      throw new BadRequestException('Managers do not occupy playing roster slots');
+    }
 
-    const capacity =
-      dto.roster_type === SquadRosterType.MAIN
-        ? squad.maxMainPlayers
-        : squad.maxSubstitutes;
+    const nextRosterType = dto.roster_type ?? member.rosterType;
+    const nextRole = dto.role ?? member.role;
+    const capacity = nextRosterType === SquadRosterType.MAIN ? squad.maxMainPlayers : squad.maxSubstitutes;
     await this.prisma.$transaction(async (tx) => {
-      const currentCount = await tx.squadMember.count({
-        where: {
-          squadId,
-          rosterType: dto.roster_type,
-          NOT: { userId },
-        },
-      });
-      if (member.rosterType !== dto.roster_type && currentCount >= capacity) {
-        throw new BadRequestException(
-          dto.roster_type === SquadRosterType.MAIN
-            ? 'MAIN_ROSTER_FULL'
-            : 'SUBSTITUTE_ROSTER_FULL',
-        );
+      if (
+        nextRole !== SquadRole.MANAGER &&
+        (nextRosterType !== member.rosterType || member.role === SquadRole.MANAGER)
+      ) {
+        const currentCount = await tx.squadMember.count({
+          where: {
+            squadId,
+            rosterType: nextRosterType,
+            role: { not: SquadRole.MANAGER },
+            NOT: { userId },
+          },
+        });
+        if (currentCount >= capacity) {
+          throw new BadRequestException(
+            nextRosterType === SquadRosterType.MAIN
+              ? 'MAIN_ROSTER_FULL'
+              : 'SUBSTITUTE_ROSTER_FULL',
+          );
+        }
       }
 
       await tx.squadMember.update({
         where: { userId },
-        data: { rosterType: dto.roster_type },
+        data: {
+          ...(dto.roster_type !== undefined ? { rosterType: dto.roster_type } : {}),
+          ...(dto.role !== undefined ? { role: dto.role } : {}),
+        },
       });
     }, { isolationLevel: 'Serializable' });
-    return this.getSquadById(squadId);
+    await this.syncLiveWaitlistStatus(squadId);
+    return {
+      status: 'success',
+      squad: await this.getSquadById(squadId),
+    };
   }
 
   async swapMembers(leaderId: string, squadId: string, dto: SwapSquadMembersDto) {
-    await this.requireLeader(leaderId, squadId);
+    await this.requireManagementRole(leaderId, squadId);
     if (dto.main_user_id === dto.sub_user_id) {
       throw new BadRequestException('Choose two different squad members');
     }
@@ -401,13 +539,19 @@ export class SquadsService {
       this.prisma.squadMember.findUnique({ where: { userId: dto.main_user_id } }),
       this.prisma.squadMember.findUnique({ where: { userId: dto.sub_user_id } }),
     ]);
-    if (!main || main.squadId !== squadId || main.rosterType !== SquadRosterType.MAIN) {
+    if (
+      !main ||
+      main.squadId !== squadId ||
+      main.role === SquadRole.MANAGER ||
+      main.rosterType !== SquadRosterType.MAIN
+    ) {
       throw new BadRequestException('main_user_id must identify a main squad player');
     }
     if (
       main.role === SquadRole.LEADER ||
       !substitute ||
       substitute.squadId !== squadId ||
+      substitute.role === SquadRole.MANAGER ||
       substitute.rosterType !== SquadRosterType.SUBSTITUTE
     ) {
       throw new BadRequestException('sub_user_id must identify a substitute member');
@@ -423,7 +567,87 @@ export class SquadsService {
         data: { rosterType: SquadRosterType.MAIN },
       }),
     ]);
-    return this.getSquadById(squadId);
+    await this.syncLiveWaitlistStatus(squadId);
+    return {
+      status: 'success',
+      message: 'Roster swapped successfully.',
+      squad: await this.getSquadById(squadId),
+    };
+  }
+
+  async getWaitlistStatus(userId: string, squadId: string) {
+    const [squad, membership] = await Promise.all([
+      this.prisma.squad.findUnique({
+        where: { id: squadId },
+        select: {
+          id: true,
+          maxMainPlayers: true,
+          maxSubstitutes: true,
+          members: { select: { role: true, rosterType: true } },
+        },
+      }),
+      this.prisma.squadMember.findUnique({
+        where: { userId },
+        select: { squadId: true },
+      }),
+    ]);
+    if (!squad) throw new NotFoundException('Squad not found');
+    if (!membership || membership.squadId !== squadId) {
+      throw new ForbiddenException('Only squad members can view waitlist status');
+    }
+
+    const linkedTeam = await this.prisma.team.findFirst({
+      where: {
+        persistentSquadId: squadId,
+        tournament: { is: { status: TournamentStatus.LIVE } },
+      },
+      select: {
+        id: true,
+        tournamentId: true,
+        createdAt: true,
+        tournament: { select: { id: true, title: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!linkedTeam || !linkedTeam.tournamentId || !linkedTeam.tournament) {
+      throw new NotFoundException('No live tournament is associated with this squad');
+    }
+
+    const waitlist = await this.prisma.tournamentWaitlist.findUnique({
+      where: {
+        tournamentId_squadId: {
+          tournamentId: linkedTeam.tournamentId,
+          squadId,
+        },
+      },
+      select: { positionInQueue: true },
+    });
+    if (!waitlist) {
+      throw new NotFoundException('Waitlist status is not available for this squad and tournament');
+    }
+    const members = squad.members.filter((member) => member.role !== SquadRole.MANAGER);
+    const mainPlayersCount = members.filter(
+      (member) => member.rosterType === SquadRosterType.MAIN,
+    ).length;
+    const substitutesCount = members.filter(
+      (member) => member.rosterType === SquadRosterType.SUBSTITUTE,
+    ).length;
+
+    return {
+      status: 'success',
+      waitlist: {
+        status: mainPlayersCount < squad.maxMainPlayers ? 'WAITLISTED' : 'CONFIRMED',
+        tournament_name: linkedTeam.tournament.title,
+        position_in_queue: waitlist.positionInQueue,
+        main_players_count: mainPlayersCount,
+        required_main_players: squad.maxMainPlayers,
+        substitutes_count: substitutesCount,
+        message:
+          mainPlayersCount < squad.maxMainPlayers
+            ? `Team is on waitlist. ${squad.maxMainPlayers} main players required to enter match lobby.`
+            : 'Team is approved and has a complete main roster.',
+      },
+    };
   }
 
   async inviteSquadToTournament(leaderId: string, squadId: string, tournamentId: string) {
@@ -440,11 +664,23 @@ export class SquadsService {
       },
     });
     if (!squad) throw new NotFoundException('Squad not found');
-    if (squad.leaderId !== leaderId) {
-      throw new ForbiddenException('Only the squad leader can invite members');
+    const inviter = await this.prisma.squadMember.findUnique({
+      where: { userId: leaderId },
+      select: {
+        squadId: true,
+        role: true,
+        user: { select: { isActive: true } },
+      },
+    });
+    if (
+      !inviter ||
+      inviter.squadId !== squadId ||
+      (inviter.role !== SquadRole.LEADER && inviter.role !== SquadRole.MANAGER)
+    ) {
+      throw new ForbiddenException('Only squad leaders and managers can send tournament invitations');
     }
-    if (!squad.members.find((member) => member.userId === leaderId)?.user.isActive) {
-      throw new ForbiddenException('Inactive squad leaders cannot send tournament invitations');
+    if (!inviter.user.isActive) {
+      throw new ForbiddenException('Inactive squad leaders and managers cannot send tournament invitations');
     }
 
     const tournament = await this.prisma.tournament.findUnique({
@@ -488,7 +724,7 @@ export class SquadsService {
     const otherMembers =
       squadOwnerRole === OwnerRole.MANAGER
         ? activeMainMemberIds
-        : activeMainMemberIds.filter((id) => id !== leaderId);
+        : activeMainMemberIds.filter((id) => id !== squad.leaderId);
 
     const expectedInviteCount = squadOwnerRole === OwnerRole.MANAGER ? 4 : 3;
     if (otherMembers.length !== expectedInviteCount) {
@@ -539,20 +775,54 @@ export class SquadsService {
         name: squad.name,
         tag: squad.tag,
         logoUrl: squad.logoUrl,
-        captainId: leaderId,
+        captainId: squad.leaderId,
         ownerRole: squadOwnerRole,
         inviteCode,
         acceptingSubstitutes: true,
-        members: { create: { userId: leaderId, role: initialTeamRole } },
+        members: { create: { userId: squad.leaderId, role: initialTeamRole } },
       },
       select: { id: true },
+    });
+    const existingWaitlist = await this.prisma.tournamentWaitlist.findUnique({
+      where: {
+        tournamentId_squadId: { tournamentId, squadId },
+      },
+      select: { positionInQueue: true },
+    });
+    const queueSize = existingWaitlist
+      ? 0
+      : await this.prisma.tournamentWaitlist.count({
+          where: {
+            tournamentId,
+            status: { not: 'CANCELLED' },
+          },
+        });
+    await this.prisma.tournamentWaitlist.upsert({
+      where: {
+        tournamentId_squadId: { tournamentId, squadId },
+      },
+      update: {
+        status:
+          mainPlayingSquadMembers.length < squad.maxMainPlayers
+            ? 'WAITLISTED'
+            : 'CONFIRMED',
+      },
+      create: {
+        tournamentId,
+        squadId,
+        positionInQueue: queueSize + 1,
+        status:
+          mainPlayingSquadMembers.length < squad.maxMainPlayers
+            ? 'WAITLISTED'
+            : 'CONFIRMED',
+      },
     });
     const createdInvitations = await this.prisma.tournamentInvitation.createMany({
       data: otherMembers.map((inviteeUserId) => ({
         squadId,
         tournamentId,
         teamId: team.id,
-        leaderId,
+        leaderId: squad.leaderId,
         inviteeUserId,
       })),
       skipDuplicates: true,
@@ -706,6 +976,7 @@ export class SquadsService {
           where: { squadId: invitation.squadId, userId },
         });
       });
+      await this.syncLiveWaitlistStatus(invitation.squadId);
     }
 
     this.events.emit('squad.invitation.responded', {
@@ -747,11 +1018,44 @@ export class SquadsService {
     return this.toSquadResponse(squad);
   }
 
-  private async requireLeader(userId: string, squadId: string) {
+  private async syncLiveWaitlistStatus(squadId: string) {
+    const squad = await this.prisma.squad.findUnique({
+      where: { id: squadId },
+      select: { maxMainPlayers: true },
+    });
+    if (!squad) throw new NotFoundException('Squad not found');
+    const mainPlayersCount = await this.prisma.squadMember.count({
+      where: {
+        squadId,
+        rosterType: SquadRosterType.MAIN,
+        role: { not: SquadRole.MANAGER },
+      },
+    });
+    await this.prisma.tournamentWaitlist.updateMany({
+      where: {
+        squadId,
+        status: { not: 'CANCELLED' },
+        tournament: { is: { status: TournamentStatus.LIVE } },
+      },
+      data: {
+        status: mainPlayersCount < squad.maxMainPlayers ? 'WAITLISTED' : 'CONFIRMED',
+      },
+    });
+  }
+
+  private async requireManagementRole(userId: string, squadId: string) {
     const squad = await this.prisma.squad.findUnique({ where: { id: squadId } });
     if (!squad) throw new NotFoundException('Squad not found');
-    if (squad.leaderId !== userId) {
-      throw new ForbiddenException('Only the squad leader can manage this squad');
+    const membership = await this.prisma.squadMember.findUnique({
+      where: { userId },
+      select: { squadId: true, role: true },
+    });
+    if (
+      !membership ||
+      membership.squadId !== squadId ||
+      (membership.role !== SquadRole.LEADER && membership.role !== SquadRole.MANAGER)
+    ) {
+      throw new ForbiddenException('Only squad leaders and managers can manage this squad');
     }
     return squad;
   }
@@ -796,7 +1100,6 @@ export class SquadsService {
         );
         return {
           user_id: member.userId,
-          name: member.user.name,
           role: member.role,
           roster_type: member.rosterType,
           joined_at: member.joinedAt,

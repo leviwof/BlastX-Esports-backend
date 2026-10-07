@@ -153,13 +153,15 @@ Emails are normalised server-side (`trim` + lowercase), so send them as typed.
 | `PATCH` | `/v1/users/me` | `{ name?, phone?, profile_pic? }`; `phone` must be a 10-digit Indian mobile number starting with 6–9 (or `null` to clear it) |
 | `GET` | `/v1/users/me/game-profile?game_slug=free_fire` | In-game identity |
 | `PUT` | `/v1/users/me/game-profile` | `{ game_slug, in_game_uid, in_game_name }` — UID must be **8–12 digits** |
-| `GET` | `/v1/squads/me` | `{ status: "success", data: { squad } }`; `squad` is strictly `null` when the user has no persistent squad, otherwise it includes roster, role, limits, and creation timestamp |
+| `GET` | `/v1/squads/me` | `{ status: "success", squad }`; `squad` is strictly `null` when the user has no persistent squad, otherwise it includes roster, role, limits, and creation timestamp |
 | `POST` | `/v1/squads` | Idempotently ensure/save the caller's most recent confirmed SQUAD tournament roster; source roster is read from the authenticated user's registration |
-| `POST` | `/v1/squads/:squadId/members/:userId` | Leader-only member removal |
-| `POST` | `/v1/squads/:squadId/transfer-leader` | Leader-only `{ new_leader_id }` |
-| `PATCH` | `/v1/squads/:squadId/members/:userId/role` | Leader-only `{ roster_type: "MAIN" | "SUBSTITUTE" }`; capacity 4/2 enforced |
-| `POST` | `/v1/squads/:squadId/swap` | Leader-only `{ main_user_id, sub_user_id }` |
-| `POST` | `/v1/squads/:squadId/tournaments/:tournamentId/invite` | Leader creates a tournament lobby and invites the other three active main players while tournament status is `LIVE` |
+| `POST` | `/v1/squads/:squadId/leave` | MEMBER-only leave; LEADER and MANAGER must transfer ownership first |
+| `POST` | `/v1/squads/:squadId/members/:userId/remove` | LEADER/MANAGER removes a regular member; leaders and managers cannot be removed |
+| `POST` | `/v1/squads/:squadId/transfer-leader` | LEADER/MANAGER `{ new_leader_id }`; transfers leadership/manager ownership |
+| `PATCH` | `/v1/squads/:squadId/members/:userId/role` | LEADER/MANAGER `{ role?: "MANAGER" | "MEMBER", roster_type?: "MAIN" | "SUBSTITUTE" }`; roster capacity 4/2 enforced |
+| `POST` | `/v1/squads/:squadId/swap` | LEADER/MANAGER `{ main_user_id, sub_user_id }` |
+| `GET` | `/v1/squads/:squadId/waitlist` | Squad member sees roster completeness, queue position, and the most recently linked LIVE tournament |
+| `POST` | `/v1/squads/:squadId/tournaments/:tournamentId/invite` | LEADER/MANAGER creates a tournament lobby and sends invitations while tournament status is `LIVE` |
 | `GET` | `/v1/invitations/pending` | Current user's open tournament invites |
 | `POST` | `/v1/invitations/:invitationId/respond` | `{ action: "ACCEPT" | "REJECT" }`; rejection removes the member from the persistent squad |
 | `GET` | `/v1/tournaments/me` | My joined tournaments |

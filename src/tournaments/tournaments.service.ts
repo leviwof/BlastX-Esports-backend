@@ -653,6 +653,27 @@ export class TournamentsService {
               where: { id: registeredTeam.id },
               data: { persistentSquadId: squad.id },
             });
+            const positionInQueue = await tx.tournamentWaitlist.count({
+              where: {
+                tournamentId,
+                status: { not: 'CANCELLED' },
+              },
+            });
+            await tx.tournamentWaitlist.upsert({
+              where: {
+                tournamentId_squadId: {
+                  tournamentId,
+                  squadId: squad.id,
+                },
+              },
+              update: {},
+              create: {
+                tournamentId,
+                squadId: squad.id,
+                positionInQueue: positionInQueue + 1,
+                status: 'CONFIRMED',
+              },
+            });
           }
         }
       }
