@@ -1115,20 +1115,34 @@ export class TournamentsService {
     let profile = await this.prisma.gameProfile.findUnique({
       where: { unique_user_game: { userId, gameId: tournament.gameId } },
     });
-    if (!profile && dto.player?.uid && dto.player?.ign) {
-      profile = await this.prisma.gameProfile.upsert({
-        where: { unique_user_game: { userId, gameId: tournament.gameId } },
-        update: {
-          inGameUid: dto.player.uid.trim(),
-          inGameName: dto.player.ign.trim(),
-        },
-        create: {
-          userId,
-          gameId: tournament.gameId,
-          inGameUid: dto.player.uid.trim(),
-          inGameName: dto.player.ign.trim(),
-        },
+    if (dto.player?.uid || (!profile && (dto.player?.name || dto.player?.ign))) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true },
       });
+      const resolvedUid = dto.player?.uid?.trim() || profile?.inGameUid || '';
+      const resolvedIgn =
+        dto.player?.ign?.trim() ||
+        dto.player?.name?.trim() ||
+        profile?.inGameName ||
+        user?.name ||
+        '';
+
+      if (resolvedUid) {
+        profile = await this.prisma.gameProfile.upsert({
+          where: { unique_user_game: { userId, gameId: tournament.gameId } },
+          update: {
+            inGameUid: resolvedUid,
+            ...(resolvedIgn ? { inGameName: resolvedIgn } : {}),
+          },
+          create: {
+            userId,
+            gameId: tournament.gameId,
+            inGameUid: resolvedUid,
+            inGameName: resolvedIgn,
+          },
+        });
+      }
     }
     if (!profile) {
       throw new BadRequestException('You must set up your Free Fire game profile before creating a team');

@@ -43,6 +43,24 @@ describe('Live Section DTO Validation Tests', () => {
       expect(dto.rosterType).toBe('MAIN');
       expect(dto.player?.ign).toBe('BLX_Amit');
     });
+
+    it('validates payload when ign is omitted from player object in JoinTeamDto', async () => {
+      const payload = {
+        invite_code: 'BLX7K29',
+        as_substitute: false,
+        rosterType: 'MAIN',
+        player: {
+          name: 'Amit Kumar',
+          uid: '887766554',
+        },
+      };
+      const dto = plainToInstance(JoinTeamDto, payload);
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+      expect(dto.player?.name).toBe('Amit Kumar');
+      expect(dto.player?.uid).toBe('887766554');
+      expect(dto.player?.ign).toBeUndefined();
+    });
   });
 
   describe('CreateTournamentTeamDto', () => {
@@ -62,6 +80,25 @@ describe('Live Section DTO Validation Tests', () => {
       const errors = await validate(dto);
       expect(errors.length).toBe(0);
       expect(dto.player?.uid).toBe('109823471');
+    });
+
+    it('validates payload when ign is omitted from player object in CreateTournamentTeamDto', async () => {
+      const payload = {
+        name: 'BLX Warriors',
+        tag: 'BLX',
+        owner_role: 'LEADER',
+        accepting_substitutes: true,
+        player: {
+          name: 'Rahul Verma',
+          uid: '109823471',
+        },
+      };
+      const dto = plainToInstance(CreateTournamentTeamDto, payload);
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+      expect(dto.player?.name).toBe('Rahul Verma');
+      expect(dto.player?.uid).toBe('109823471');
+      expect(dto.player?.ign).toBeUndefined();
     });
 
     it('validates payload with valid URL for logo_url', async () => {

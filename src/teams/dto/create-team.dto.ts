@@ -1,5 +1,7 @@
-import { IsNotEmpty, IsOptional, IsString, IsUrl, Matches, Length, IsBoolean, IsEnum } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsUrl, Matches, Length, IsBoolean, IsEnum, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import { OwnerRole } from '@prisma/client';
+import { PlayerInfoDto } from './join-team.dto';
 
 export class CreateTeamDto {
   @IsOptional()
@@ -32,4 +34,10 @@ export class CreateTeamDto {
   @IsOptional()
   @IsEnum(OwnerRole)
   ownerRole?: OwnerRole;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PlayerInfoDto)
+  player?: PlayerInfoDto;
 }
+

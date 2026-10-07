@@ -32,12 +32,17 @@ import { JwtService } from '@nestjs/jwt';
 import { Request, Response } from 'express';
 import { LeaderboardEntry } from '../matches/match.mapper';
 
+import { TeamsService } from '../teams/teams.service';
+import { JoinTeamDto } from '../teams/dto/join-team.dto';
+import { toTeamResponse, TeamResponse } from '../teams/team.mapper';
+
 @Controller('tournaments')
 export class TournamentsController {
   constructor(
     private readonly tournamentsService: TournamentsService,
     private readonly matchesService: MatchesService,
     private readonly jwtService: JwtService,
+    private readonly teamsService: TeamsService,
   ) {}
 
   @Public()
@@ -226,5 +231,26 @@ export class TournamentsController {
     @Param('code') code: string,
   ) {
     return this.tournamentsService.previewTeamByCode(id, code, user.sub);
+  }
+
+  @Post(':id/teams/:teamId/join')
+  @UseGuards(JwtAuthGuard)
+  async joinTournamentTeamById(
+    @CurrentUser() user: JwtUser,
+    @Param('teamId') teamId: string,
+    @Body() dto: JoinTeamDto,
+  ): Promise<TeamResponse> {
+    const team = await this.teamsService.joinTeam(user.sub, dto, teamId);
+    return toTeamResponse(team);
+  }
+
+  @Post(':id/teams/join')
+  @UseGuards(JwtAuthGuard)
+  async joinTournamentTeam(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: JoinTeamDto,
+  ): Promise<TeamResponse> {
+    const team = await this.teamsService.joinTeam(user.sub, dto);
+    return toTeamResponse(team);
   }
 }

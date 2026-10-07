@@ -35,7 +35,7 @@ export class TeamsService {
     }
 
     // Must have a Game Profile for this game
-    const profile = await this.prisma.gameProfile.findUnique({
+    let profile = await this.prisma.gameProfile.findUnique({
       where: {
         unique_user_game: {
           userId: captainId,
@@ -43,6 +43,37 @@ export class TeamsService {
         },
       },
     });
+
+    if (dto.player?.uid || (!profile && (dto.player?.name || dto.player?.ign))) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: captainId },
+        select: { name: true },
+      });
+      const resolvedUid = dto.player?.uid?.trim() || profile?.inGameUid || '';
+      const resolvedIgn =
+        dto.player?.ign?.trim() ||
+        dto.player?.name?.trim() ||
+        profile?.inGameName ||
+        user?.name ||
+        '';
+
+      if (resolvedUid) {
+        profile = await this.prisma.gameProfile.upsert({
+          where: { unique_user_game: { userId: captainId, gameId: game.id } },
+          update: {
+            inGameUid: resolvedUid,
+            ...(resolvedIgn ? { inGameName: resolvedIgn } : {}),
+          },
+          create: {
+            userId: captainId,
+            gameId: game.id,
+            inGameUid: resolvedUid,
+            inGameName: resolvedIgn,
+          },
+        });
+      }
+    }
+
     if (!profile) {
       throw new BadRequestException(`You must create a ${game.name} game profile before creating a team`);
     }
@@ -176,12 +207,34 @@ export class TeamsService {
         },
       },
     });
-    if (!profile && dto.player?.uid && dto.player?.ign) {
-      profile = await this.prisma.gameProfile.upsert({
-        where: { unique_user_game: { userId, gameId: team.gameId } },
-        update: { inGameUid: dto.player.uid, inGameName: dto.player.ign },
-        create: { userId, gameId: team.gameId, inGameUid: dto.player.uid, inGameName: dto.player.ign },
+    if (dto.player?.uid || (!profile && (dto.player?.name || dto.player?.ign))) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true },
       });
+      const resolvedUid = dto.player?.uid?.trim() || profile?.inGameUid || '';
+      const resolvedIgn =
+        dto.player?.ign?.trim() ||
+        dto.player?.name?.trim() ||
+        profile?.inGameName ||
+        user?.name ||
+        '';
+
+      if (resolvedUid) {
+        profile = await this.prisma.gameProfile.upsert({
+          where: { unique_user_game: { userId, gameId: team.gameId } },
+          update: {
+            inGameUid: resolvedUid,
+            ...(resolvedIgn ? { inGameName: resolvedIgn } : {}),
+          },
+          create: {
+            userId,
+            gameId: team.gameId,
+            inGameUid: resolvedUid,
+            inGameName: resolvedIgn,
+          },
+        });
+      }
     }
     if (!profile) {
       throw new BadRequestException('You must set up your Free Fire game profile before joining a team');
