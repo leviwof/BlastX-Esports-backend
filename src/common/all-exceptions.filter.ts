@@ -81,10 +81,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (errorCode) {
       responseBody.code = errorCode;
+      responseBody.error_code = errorCode;
       responseBody.error = {
         code: errorCode,
         message,
       };
+    }
+
+    if (typeof payload === 'object' && payload !== null && typeof (payload as any).error_code === 'string') {
+      responseBody.error_code = (payload as any).error_code;
     }
 
     // Preserve safe, client-actionable metadata from explicitly constructed

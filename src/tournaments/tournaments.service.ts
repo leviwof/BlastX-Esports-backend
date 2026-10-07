@@ -1100,6 +1100,22 @@ export class TournamentsService {
       throw new BadRequestException(`Team name '${cleanName}' is already taken for this game`);
     }
 
+    const userSquadMember = await this.prisma.squadMember.findUnique({
+      where: { userId },
+    });
+    if (
+      userSquadMember &&
+      userSquadMember.role !== SquadRole.LEADER &&
+      userSquadMember.role !== SquadRole.MANAGER
+    ) {
+      throw new ForbiddenException({
+        status: 'error',
+        code: 'NON_LEADER_REGISTRATION_FORBIDDEN',
+        error_code: 'NON_LEADER_REGISTRATION_FORBIDDEN',
+        message: 'please ask team leader to register the tournament',
+      });
+    }
+
     const existingTournamentMembership = await this.prisma.teamMember.findFirst({
       where: {
         userId,
@@ -1108,7 +1124,12 @@ export class TournamentsService {
       select: { id: true },
     });
     if (existingTournamentMembership) {
-      throw new BadRequestException('You are already a member of a team for this tournament');
+      throw new BadRequestException({
+        status: 'error',
+        code: 'ALREADY_IN_TEAM',
+        error_code: 'ALREADY_IN_TEAM',
+        message: 'You are already part of a team in this tournament.',
+      });
     }
 
     // Must have Game Profile for tournament's game

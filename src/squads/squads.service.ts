@@ -868,6 +868,10 @@ export class SquadsService {
       id: invitation.id,
       squad_id: invitation.squadId,
       tournament_id: invitation.tournamentId,
+      tournamentId: invitation.tournamentId,
+      tournamentName: invitation.tournament.title,
+      squadName: invitation.squad.name,
+      leaderName: invitation.leader.name,
       team_id: invitation.teamId,
       status: invitation.status,
       created_at: invitation.createdAt,
@@ -1100,6 +1104,10 @@ export class SquadsService {
         );
         return {
           user_id: member.userId,
+          name: member.user.name,
+          avatarUrl: member.user.profilePic || '',
+          ign: profile?.inGameName ?? null,
+          uid: profile?.inGameUid ?? null,
           role: member.role,
           roster_type: member.rosterType,
           joined_at: member.joinedAt,

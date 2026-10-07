@@ -47,7 +47,7 @@ async function bootstrap(): Promise<void> {
   const uploadsDir = path.join(process.cwd(), 'uploads');
   app.use('/uploads', express.static(uploadsDir));
 
-  app.setGlobalPrefix('v1', { exclude: ['health'] }); // /health stays unprefixed for Railway healthchecks
+  app.setGlobalPrefix('v1', { exclude: ['health', 'api/(.*)'] }); // /health and /api/* stay unprefixed
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: false }),
   );

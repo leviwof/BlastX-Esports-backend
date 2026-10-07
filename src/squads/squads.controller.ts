@@ -17,11 +17,11 @@ import { SwapSquadMembersDto } from './dto/swap-squad-members.dto';
 import { TransferSquadLeaderDto } from './dto/transfer-squad-leader.dto';
 import { UpdateSquadMemberRoleDto } from './dto/update-squad-member-role.dto';
 
-@Controller('squads')
+@Controller(['squads', 'squad', 'api/squad', 'api/squads'])
 export class SquadsController {
   constructor(private readonly squads: SquadsService) {}
 
-  @Post()
+  @Post(['', 'create'])
   createOrSaveSquad(
     @CurrentUser() user: JwtUser,
     @Body() dto?: CreateSquadDto,
@@ -37,7 +37,7 @@ export class SquadsController {
     return this.squads.joinSquad(user.sub, dto);
   }
 
-  @Get('me')
+  @Get(['me', 'my-squad'])
   getMySquad(@CurrentUser() user: JwtUser) {
     return this.squads.getMySquad(user.sub);
   }

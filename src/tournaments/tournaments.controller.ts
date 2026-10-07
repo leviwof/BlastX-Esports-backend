@@ -37,7 +37,7 @@ import { TeamsService } from '../teams/teams.service';
 import { JoinTeamDto } from '../teams/dto/join-team.dto';
 import { toTeamResponse, TeamResponse } from '../teams/team.mapper';
 
-@Controller('tournaments')
+@Controller(['tournaments', 'api/tournaments'])
 export class TournamentsController {
   constructor(
     private readonly tournamentsService: TournamentsService,

@@ -139,6 +139,10 @@ describe('SquadsService', () => {
           members: [
             {
               user_id: 'leader-1',
+              name: 'Phoenix Captain',
+              avatarUrl: 'https://cdn.blastx.gg/avatars/p1.png',
+              ign: '★PHOENIX★',
+              uid: '827364129',
               role: 'LEADER',
               roster_type: 'MAIN',
               joined_at: joinedAt,
