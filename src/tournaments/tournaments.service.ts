@@ -1085,23 +1085,45 @@ export class TournamentsService implements OnModuleInit {
       },
     });
     if (formingTeam) {
-      const registration = await this.prisma.tournamentRegistration.findUnique({
+      let registration = await this.prisma.tournamentRegistration.findUnique({
         where: {
           unique_tournament_team: { tournamentId, teamId: formingTeam.id },
         },
       });
+
+      const mainCount = formingTeam.members.filter(
+        (member) => member.role !== TeamMemberRole.SUBSTITUTE && member.role !== TeamMemberRole.MANAGER,
+      ).length;
+
+      if (!registration && mainCount === 4) {
+        const tourney = await this.prisma.tournament.findUnique({ where: { id: tournamentId } });
+        if (tourney) {
+          registration = await this.prisma.tournamentRegistration.create({
+            data: {
+              tournamentId,
+              userId: formingTeam.captainId,
+              teamId: formingTeam.id,
+              status: RegistrationStatus.CONFIRMED,
+              slotNumber: tourney.registeredCount + 1,
+            },
+          });
+          await this.prisma.tournament.update({
+            where: { id: tournamentId },
+            data: { registeredCount: { increment: 1 } },
+          });
+        }
+      }
+
+      const isRegistered = registration?.status === RegistrationStatus.CONFIRMED;
       const invitations = await this.getLobbyInvitations(formingTeam.id);
       return {
         ...toTeamResponse(formingTeam as any),
         tournament_id: tournamentId,
-        is_registered: registration?.status === RegistrationStatus.CONFIRMED,
+        is_registered: isRegistered,
         slot_number: registration?.slotNumber ?? null,
-        registration_status: registration?.status ?? null,
+        registration_status: isRegistered ? 'REGISTERED' : 'FORMING',
         invitations,
-        is_ready:
-          formingTeam.members.filter(
-            (member) => member.role !== TeamMemberRole.SUBSTITUTE && member.role !== TeamMemberRole.MANAGER,
-          ).length === 4,
+        is_ready: mainCount === 4,
       };
     }
 

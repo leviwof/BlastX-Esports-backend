@@ -966,6 +966,69 @@ export class SquadsService {
       if (!accepted) {
         throw new BadRequestException('Invitation is no longer valid because you are not in this squad');
       }
+
+      let autoRegistered = false;
+      const teamMembers = await this.prisma.teamMember.findMany({
+        where: { teamId: invitation.teamId },
+      });
+      const mainCount = teamMembers.filter(
+        (m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER,
+      ).length;
+
+      if (mainCount === 4) {
+        const existingReg = await this.prisma.tournamentRegistration.findFirst({
+          where: {
+            tournamentId: invitation.tournamentId,
+            teamId: invitation.teamId,
+            status: RegistrationStatus.CONFIRMED,
+          },
+        });
+        if (!existingReg) {
+          const tourney = await this.prisma.tournament.findUnique({
+            where: { id: invitation.tournamentId },
+          });
+          if (tourney) {
+            await this.prisma.tournamentRegistration.create({
+              data: {
+                tournamentId: invitation.tournamentId,
+                userId: invitation.leaderId,
+                teamId: invitation.teamId,
+                status: RegistrationStatus.CONFIRMED,
+                slotNumber: tourney.registeredCount + 1,
+              },
+            });
+            await this.prisma.tournament.update({
+              where: { id: invitation.tournamentId },
+              data: { registeredCount: { increment: 1 } },
+            });
+            autoRegistered = true;
+          }
+        } else {
+          autoRegistered = true;
+        }
+      }
+
+      this.events.emit('squad.invitation.responded', {
+        userId: invitation.leaderId,
+        playerName: invitation.invitee.name,
+        squadId: invitation.squadId,
+        tournamentId: invitation.tournamentId,
+        tournamentTitle: invitation.tournament.title,
+        action,
+      });
+
+      return {
+        success: true,
+        status: 'ACCEPTED',
+        auto_registered: autoRegistered,
+        id: invitation.id,
+        team_id: invitation.teamId,
+        tournament_id: invitation.tournamentId,
+        team: {
+          id: invitation.teamId,
+          registration_status: autoRegistered ? 'REGISTERED' : 'FORMING',
+        },
+      };
     } else {
       await this.prisma.$transaction(async (tx) => {
         await tx.tournamentInvitation.updateMany({
@@ -992,13 +1055,16 @@ export class SquadsService {
       action,
     });
     return {
+      success: true,
+      status: 'REJECTED',
+      auto_registered: false,
       id: invitation.id,
-      status:
-        action === 'ACCEPT'
-          ? TournamentInvitationStatus.ACCEPTED
-          : TournamentInvitationStatus.REJECTED,
       team_id: invitation.teamId,
       tournament_id: invitation.tournamentId,
+      team: {
+        id: invitation.teamId,
+        registration_status: 'FORMING',
+      },
     };
   }
 

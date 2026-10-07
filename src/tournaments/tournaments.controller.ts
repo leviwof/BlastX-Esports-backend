@@ -214,7 +214,15 @@ export class TournamentsController {
     if (!team) {
       throw new NotFoundException(`No registered team found for tournament '${id}'`);
     }
-    return team;
+    const regStatus = team.registration_status || (team.is_registered ? 'REGISTERED' : 'FORMING');
+    return {
+      team: {
+        ...team,
+        registration_status: regStatus,
+      },
+      ...team,
+      registration_status: regStatus,
+    };
   }
 
   @Post(':id/teams')

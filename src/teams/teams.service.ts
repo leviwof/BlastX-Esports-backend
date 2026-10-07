@@ -347,6 +347,45 @@ export class TeamsService {
       throw error;
     }
 
+    if (team.tournamentId) {
+      const allMembers = await this.prisma.teamMember.findMany({
+        where: { teamId: team.id },
+      });
+      const mainCount = allMembers.filter(
+        (m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER,
+      ).length;
+
+      if (mainCount === 4) {
+        const existingReg = await this.prisma.tournamentRegistration.findFirst({
+          where: {
+            tournamentId: team.tournamentId,
+            teamId: team.id,
+            status: RegistrationStatus.CONFIRMED,
+          },
+        });
+        if (!existingReg) {
+          const tourney = await this.prisma.tournament.findUnique({
+            where: { id: team.tournamentId },
+          });
+          if (tourney) {
+            await this.prisma.tournamentRegistration.create({
+              data: {
+                tournamentId: team.tournamentId,
+                userId: team.captainId,
+                teamId: team.id,
+                status: RegistrationStatus.CONFIRMED,
+                slotNumber: tourney.registeredCount + 1,
+              },
+            });
+            await this.prisma.tournament.update({
+              where: { id: team.tournamentId },
+              data: { registeredCount: { increment: 1 } },
+            });
+          }
+        }
+      }
+    }
+
     return this.getTeamById(team.id);
   }
 
