@@ -344,6 +344,20 @@ export class TournamentsService implements OnModuleInit {
     });
   }
 
+  async deleteTournament(adminId: string, tournamentId: string): Promise<{ success: true; message: string; id: string }> {
+    const tournament = await this.getTournamentEntity(tournamentId);
+
+    await this.prisma.tournament.delete({
+      where: { id: tournamentId },
+    });
+
+    return {
+      success: true,
+      message: `Tournament '${tournament.title}' (ID: ${tournamentId}) permanently deleted successfully`,
+      id: tournamentId,
+    };
+  }
+
   /**
    * Public statuses that may appear in the listing.
    * DRAFT and CANCELLED are never shown to regular users.

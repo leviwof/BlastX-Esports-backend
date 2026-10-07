@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { TournamentsService } from './tournaments.service';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { RolesGuard } from '../common/roles.guard';
@@ -53,6 +53,22 @@ export class AdminTournamentsController {
   ): Promise<TournamentResponse> {
     const tournament = await this.tournamentsService.updateStatus(user.sub, id, dto.status);
     return toTournamentResponse(tournament, undefined, true);
+  }
+
+  @Delete(':id')
+  async deleteTournament(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+  ) {
+    return this.tournamentsService.deleteTournament(user.sub, id);
+  }
+
+  @Post(':id/delete')
+  async deleteTournamentPost(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+  ) {
+    return this.tournamentsService.deleteTournament(user.sub, id);
   }
 
   @Post([':id/room', ':id/room-details'])
