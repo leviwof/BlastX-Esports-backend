@@ -5,6 +5,7 @@ import {
   NotFoundException,
   HttpException,
   HttpStatus,
+  OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -24,6 +25,7 @@ import {
   SquadRosterType,
   User,
   OwnerRole,
+  UserRole,
 } from '@prisma/client';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
@@ -39,12 +41,143 @@ import { TournamentBracketResponse, TournamentStage, StageTeam } from './tournam
 import { randomBytes } from 'crypto';
 
 @Injectable()
-export class TournamentsService {
+export class TournamentsService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
     private readonly config: ConfigService,
   ) {}
+
+  async onModuleInit() {
+    await this.seedDefaultTournaments().catch((err) => {
+      console.warn('Auto-seeding default tournaments failed:', err?.message || err);
+    });
+  }
+
+  private async seedDefaultTournaments() {
+    try {
+      const game = await this.prisma.game.upsert({
+        where: { slug: 'free_fire' },
+        update: { name: 'Free Fire' },
+        create: { slug: 'free_fire', name: 'Free Fire' },
+      });
+
+      const admin = await this.prisma.user.upsert({
+        where: { email: 'admin@blastixesports.com' },
+        update: { role: UserRole.ADMIN },
+        create: {
+          name: 'BlastiX Admin',
+          email: 'admin@blastixesports.com',
+          role: UserRole.ADMIN,
+          isActive: true,
+        },
+      });
+
+      const now = new Date();
+      const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+      const defaultTournaments = [
+        {
+          id: 'tourney_ff_001',
+          gameId: game.id,
+          title: 'Free Fire Squad Championship',
+          description: 'Official 4v4 Free Fire Battle Royale Squad tournament.',
+          bannerUrl: 'https://images.unsplash.com/photo-1511512578047-dfb367046420',
+          format: TournamentFormat.BATTLE_ROYALE,
+          teamMode: TeamMode.SQUAD,
+          map: 'BERMUDA',
+          maxSlots: 48,
+          registeredCount: 0,
+          entryFee: 0,
+          prizePool: 50000,
+          prizeDistribution: [{ rank: 1, amount: 25000 }, { rank: 2, amount: 15000 }, { rank: 3, amount: 10000 }],
+          rules: { note: 'No emulator, squad of 4 main players required' },
+          registrationOpensAt: new Date(now.getTime() - 3600000),
+          registrationClosesAt: nextWeek,
+          startsAt: new Date(nextWeek.getTime() + 3600000),
+          status: TournamentStatus.REGISTRATION_OPEN,
+          section: TournamentSection.FREEFIRE_LIVE,
+          createdBy: admin.id,
+        },
+        {
+          id: 'tourney_123',
+          gameId: game.id,
+          title: 'Free Fire Solo Daily Showdown',
+          description: 'Daily Solo Battle Royale Tournament.',
+          bannerUrl: 'https://images.unsplash.com/photo-1542751371-adc38448a05e',
+          format: TournamentFormat.BATTLE_ROYALE,
+          teamMode: TeamMode.SOLO,
+          map: 'BERMUDA',
+          maxSlots: 48,
+          registeredCount: 0,
+          entryFee: 0,
+          prizePool: 25000,
+          prizeDistribution: [{ rank: 1, amount: 15000 }, { rank: 2, amount: 10000 }],
+          rules: { note: 'Solo match' },
+          registrationOpensAt: new Date(now.getTime() - 3600000),
+          registrationClosesAt: nextWeek,
+          startsAt: new Date(nextWeek.getTime() + 3600000),
+          status: TournamentStatus.REGISTRATION_OPEN,
+          section: TournamentSection.BLASTX,
+          createdBy: admin.id,
+        },
+        {
+          id: 'tourney-ff-solo-01',
+          gameId: game.id,
+          title: 'Free Fire Solo Daily Showdown',
+          description: 'Battle Royale Solo tournament open for all survivors!',
+          bannerUrl: 'https://images.unsplash.com/photo-1542751371-adc38448a05e',
+          format: TournamentFormat.BATTLE_ROYALE,
+          teamMode: TeamMode.SOLO,
+          map: 'BERMUDA',
+          maxSlots: 48,
+          registeredCount: 0,
+          entryFee: 0,
+          prizePool: 50000,
+          prizeDistribution: [{ rank: 1, amount: 25000 }, { rank: 2, amount: 15000 }, { rank: 3, amount: 10000 }],
+          rules: { note: 'No hacking, emulator restricted' },
+          registrationOpensAt: new Date(now.getTime() - 3600000),
+          registrationClosesAt: nextWeek,
+          startsAt: new Date(nextWeek.getTime() + 3600000),
+          status: TournamentStatus.REGISTRATION_OPEN,
+          section: TournamentSection.BLASTX,
+          createdBy: admin.id,
+        },
+        {
+          id: 'tourney-ff-squad-01',
+          gameId: game.id,
+          title: 'Free Fire Squad Championship',
+          description: '4v4 Battle Royale Squad championship.',
+          bannerUrl: 'https://images.unsplash.com/photo-1511512578047-dfb367046420',
+          format: TournamentFormat.BATTLE_ROYALE,
+          teamMode: TeamMode.SQUAD,
+          map: 'PURGATORY',
+          maxSlots: 12,
+          registeredCount: 0,
+          entryFee: 0,
+          prizePool: 200000,
+          prizeDistribution: [{ rank: 1, amount: 120000 }, { rank: 2, amount: 80000 }],
+          rules: { note: 'Squad of 4 players required + 1 optional sub' },
+          registrationOpensAt: now,
+          registrationClosesAt: nextWeek,
+          startsAt: new Date(nextWeek.getTime() + 3600000),
+          status: TournamentStatus.REGISTRATION_OPEN,
+          section: TournamentSection.BLASTX,
+          createdBy: admin.id,
+        },
+      ];
+
+      for (const t of defaultTournaments) {
+        await this.prisma.tournament.upsert({
+          where: { id: t.id },
+          update: {},
+          create: t,
+        });
+      }
+    } catch (e) {
+      console.warn('Auto-seeding default tournaments skipped:', (e as any)?.message || e);
+    }
+  }
 
   async createTournament(adminId: string, dto: CreateTournamentDto): Promise<Tournament> {
     const gameSlug = dto.game_slug || 'free_fire';

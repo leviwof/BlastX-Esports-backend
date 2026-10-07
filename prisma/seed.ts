@@ -1,4 +1,4 @@
-import { PrismaClient, TournamentFormat, TeamMode, TournamentStatus, UserRole } from '@prisma/client';
+import { PrismaClient, TournamentFormat, TeamMode, TournamentStatus, TournamentSection, UserRole } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -95,7 +95,63 @@ async function main() {
       registrationOpensAt: now,
       registrationClosesAt: nextWeek,
       startsAt: new Date(nextWeek.getTime() + 3600000),
-      status: TournamentStatus.UPCOMING,
+      status: TournamentStatus.REGISTRATION_OPEN,
+      createdBy: admin.id,
+    },
+  });
+
+  // Tournament 3: tourney_ff_001
+  await prisma.tournament.upsert({
+    where: { id: 'tourney_ff_001' },
+    update: {},
+    create: {
+      id: 'tourney_ff_001',
+      gameId: game.id,
+      title: 'Free Fire Squad Championship',
+      description: 'Official 4v4 Free Fire Battle Royale Squad tournament.',
+      bannerUrl: 'https://images.unsplash.com/photo-1511512578047-dfb367046420',
+      format: TournamentFormat.BATTLE_ROYALE,
+      teamMode: TeamMode.SQUAD,
+      map: 'BERMUDA',
+      maxSlots: 48,
+      registeredCount: 0,
+      entryFee: 0,
+      prizePool: 50000,
+      prizeDistribution: [{ rank: 1, amount: 25000 }, { rank: 2, amount: 15000 }, { rank: 3, amount: 10000 }],
+      rules: { note: 'No emulator, squad of 4 main players required' },
+      registrationOpensAt: new Date(now.getTime() - 3600000),
+      registrationClosesAt: nextWeek,
+      startsAt: new Date(nextWeek.getTime() + 3600000),
+      status: TournamentStatus.REGISTRATION_OPEN,
+      section: TournamentSection.FREEFIRE_LIVE,
+      createdBy: admin.id,
+    },
+  });
+
+  // Tournament 4: tourney_123
+  await prisma.tournament.upsert({
+    where: { id: 'tourney_123' },
+    update: {},
+    create: {
+      id: 'tourney_123',
+      gameId: game.id,
+      title: 'Free Fire Solo Daily Showdown',
+      description: 'Daily Solo Battle Royale Tournament.',
+      bannerUrl: 'https://images.unsplash.com/photo-1542751371-adc38448a05e',
+      format: TournamentFormat.BATTLE_ROYALE,
+      teamMode: TeamMode.SOLO,
+      map: 'BERMUDA',
+      maxSlots: 48,
+      registeredCount: 0,
+      entryFee: 0,
+      prizePool: 25000,
+      prizeDistribution: [{ rank: 1, amount: 15000 }, { rank: 2, amount: 10000 }],
+      rules: { note: 'Solo match' },
+      registrationOpensAt: new Date(now.getTime() - 3600000),
+      registrationClosesAt: nextWeek,
+      startsAt: new Date(nextWeek.getTime() + 3600000),
+      status: TournamentStatus.REGISTRATION_OPEN,
+      section: TournamentSection.BLASTX,
       createdBy: admin.id,
     },
   });
