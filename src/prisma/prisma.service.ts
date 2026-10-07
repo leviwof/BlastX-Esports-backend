@@ -19,6 +19,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private connected = false;
   private lastFailure: string | null = null;
 
+  constructor() {
+    let dbUrl = process.env.DATABASE_URL || '';
+    if (dbUrl && !dbUrl.includes('connection_limit')) {
+      const separator = dbUrl.includes('?') ? '&' : '?';
+      dbUrl = `${dbUrl}${separator}connection_limit=5&pool_timeout=15`;
+    }
+    super(dbUrl ? { datasources: { db: { url: dbUrl } } } : undefined);
+  }
+
   async onModuleInit(): Promise<void> {
     await this.tryConnect();
     if (!this.connected) this.scheduleRetry();

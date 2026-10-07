@@ -271,15 +271,13 @@ export class ContentService {
       where.isActive = query.is_active;
     }
 
-    const [total, banners] = await Promise.all([
-      this.prisma.banner.count({ where }),
-      this.prisma.banner.findMany({
-        where,
-        skip: query.skip,
-        take: query.take,
-        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
-      }),
-    ]);
+    const total = await this.prisma.banner.count({ where });
+    const banners = await this.prisma.banner.findMany({
+      where,
+      skip: query.skip,
+      take: query.take,
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+    });
 
     return createPaginatedResponse(banners.map(toBannerResponse), query.page ?? 1, query.limit ?? 20, total);
   }
@@ -490,15 +488,13 @@ export class ContentService {
       where.isPublished = query.is_active;
     }
 
-    const [total, announcements] = await Promise.all([
-      this.prisma.announcement.count({ where }),
-      this.prisma.announcement.findMany({
-        where,
-        skip: query.skip,
-        take: query.take,
-        orderBy: { createdAt: 'desc' },
-      }),
-    ]);
+    const total = await this.prisma.announcement.count({ where });
+    const announcements = await this.prisma.announcement.findMany({
+      where,
+      skip: query.skip,
+      take: query.take,
+      orderBy: { createdAt: 'desc' },
+    });
 
     return createPaginatedResponse(announcements.map(toAnnouncementResponse), query.page ?? 1, query.limit ?? 20, total);
   }
@@ -557,15 +553,13 @@ export class ContentService {
       where.isActive = query.is_active;
     }
 
-    const [total, notices] = await Promise.all([
-      this.prisma.notice.count({ where }),
-      this.prisma.notice.findMany({
-        where,
-        skip: query.skip,
-        take: query.take,
-        orderBy: { createdAt: 'desc' },
-      }),
-    ]);
+    const total = await this.prisma.notice.count({ where });
+    const notices = await this.prisma.notice.findMany({
+      where,
+      skip: query.skip,
+      take: query.take,
+      orderBy: { createdAt: 'desc' },
+    });
 
     return createPaginatedResponse(notices.map(toNoticeResponse), query.page ?? 1, query.limit ?? 20, total);
   }

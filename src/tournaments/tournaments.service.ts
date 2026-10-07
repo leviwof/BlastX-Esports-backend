@@ -450,21 +450,19 @@ export class TournamentsService implements OnModuleInit {
     if (where.game) countsWhere.game = where.game;
     countsWhere.section = requiredSection ?? dto.section ?? TournamentSection.BLASTX;
 
-    const [items, total, statusGroups] = await Promise.all([
-      this.prisma.tournament.findMany({
-        where,
-        include: { game: { select: { slug: true } } },
-        orderBy: { startsAt: 'asc' },
-        skip: dto.skip,
-        take: dto.take,
-      }),
-      this.prisma.tournament.count({ where }),
-      this.prisma.tournament.groupBy({
-        by: ['status'],
-        where: countsWhere,
-        _count: { _all: true },
-      }),
-    ]);
+    const items = await this.prisma.tournament.findMany({
+      where,
+      include: { game: { select: { slug: true } } },
+      orderBy: { startsAt: 'asc' },
+      skip: dto.skip,
+      take: dto.take,
+    });
+    const total = await this.prisma.tournament.count({ where });
+    const statusGroups = await this.prisma.tournament.groupBy({
+      by: ['status'],
+      where: countsWhere,
+      _count: { _all: true },
+    });
 
     const statusMap = new Map<string, number>();
     for (const sg of statusGroups) {
