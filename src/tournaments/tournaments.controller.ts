@@ -9,6 +9,7 @@ import {
   UseGuards,
   Req,
   Res,
+  NotFoundException,
 } from '@nestjs/common';
 import { TournamentsService } from './tournaments.service';
 import { MatchesService } from '../matches/matches.service';
@@ -209,7 +210,11 @@ export class TournamentsController {
   @Get(':id/my-team')
   @UseGuards(JwtAuthGuard)
   async getMyTeam(@CurrentUser() user: JwtUser, @Param('id') id: string) {
-    return this.tournamentsService.getMyTeamForTournament(user.sub, id);
+    const team = await this.tournamentsService.getMyTeamForTournament(user.sub, id);
+    if (!team) {
+      throw new NotFoundException(`No registered team found for tournament '${id}'`);
+    }
+    return team;
   }
 
   @Post(':id/teams')

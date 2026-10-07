@@ -58,17 +58,28 @@ describe('ContentService image uploads', () => {
           title: 'BGC 2026',
           subtitle: 'Bigger battles',
           brand_badge: 'COMMUNITY',
+          brandBadge: 'COMMUNITY',
           image_url: 'https://example.com/banner.png',
+          imageUrl: 'https://example.com/banner.png',
           button_text: 'Know more',
+          buttonText: 'Know more',
           target_tab_index: 1,
+          targetTabIndex: 1,
           link_url: null,
+          linkUrl: null,
           sort_order: 2,
+          sortOrder: 2,
           order: 2,
           is_active: true,
+          isActive: true,
           starts_at: null,
+          startsAt: null,
           ends_at: null,
+          endsAt: null,
           created_at: banner.createdAt,
+          createdAt: banner.createdAt,
           updated_at: banner.updatedAt,
+          updatedAt: banner.updatedAt,
         },
       ]);
       expect(prisma.banner.findMany).toHaveBeenCalledWith(
@@ -107,11 +118,17 @@ describe('ContentService image uploads', () => {
           subtitle: 'Grand Finals',
           location: 'New Delhi, India',
           viewer_count: '12.4K',
+          viewerCount: '12.4K',
           is_live: true,
+          isLive: true,
           is_official: true,
+          isOfficial: true,
           image_url: 'https://example.com/stream.png',
+          imageUrl: 'https://example.com/stream.png',
           stream_url: 'https://youtube.com/live/abc',
+          streamUrl: 'https://youtube.com/live/abc',
           cta_text: 'Watch Now →',
+          ctaText: 'Watch Now →',
         },
       ]);
     });
@@ -126,7 +143,7 @@ describe('ContentService image uploads', () => {
       const service = new ContentService(prisma as never);
 
       await expect(service.listHomePartners()).resolves.toEqual([
-        { id: 'partner_1', name: 'Red Bull Gaming', logo_url: 'https://example.com/redbull.png' },
+        { id: 'partner_1', name: 'Red Bull Gaming', logo_url: 'https://example.com/redbull.png', logoUrl: 'https://example.com/redbull.png' },
       ]);
       expect(prisma.brandPartner.findMany).toHaveBeenCalledWith({
         where: { isActive: true },

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PartnerInquiryStatus } from '@prisma/client';
 import { CreatePartnerInquiryDto } from './dto/create-partner-inquiry.dto';
@@ -12,13 +12,21 @@ export class PartnersService {
     status: 'success';
     message: string;
   }> {
+    const brandName = (dto.brandName ?? dto.brand_name ?? '').trim();
+    const contactName = (dto.contactName ?? dto.contact_name ?? '').trim();
+    const partnershipType = (dto.partnershipType ?? dto.partnership_type ?? '').trim();
+
+    if (!brandName || !contactName || !partnershipType) {
+      throw new BadRequestException('brandName (or brand_name), contactName (or contact_name), and partnershipType (or partnership_type) are required.');
+    }
+
     await this.prisma.partnerInquiry.create({
       data: {
-        brandName: dto.brand_name.trim(),
-        contactName: dto.contact_name.trim(),
+        brandName,
+        contactName,
         email: dto.email.trim().toLowerCase(),
         phone: dto.phone.trim(),
-        partnershipType: dto.partnership_type.trim(),
+        partnershipType,
         message: dto.message.trim(),
       },
     });

@@ -12,13 +12,21 @@ export class ContentController {
   @Public()
   @Get('home/banners')
   async getHomeBanners() {
-    return this.contentService.listHomeBanners();
+    const banners = await this.contentService.listHomeBanners();
+    return {
+      success: true,
+      banners,
+    };
   }
 
   @Public()
   @Get('home/live-streams')
   async getHomeLiveStreams() {
-    return this.contentService.listLiveStreams();
+    const streams = await this.contentService.listLiveStreams();
+    return {
+      success: true,
+      streams,
+    };
   }
 
   @Public()
