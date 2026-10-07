@@ -116,6 +116,8 @@ model User {
   createdTournaments        Tournament[]             @relation("CreatedTournaments")
   tournamentRegistrations   TournamentRegistration[]
   userChallenges            UserChallenge[]
+  issueReports              IssueReport[]
+  supportTickets            SupportTicket[]
 
   @@index([fcmToken], map: "users_fcm_token_idx")
   @@map("users")
@@ -563,4 +565,76 @@ model Notice {
   updatedAt DateTime       @updatedAt @map("updated_at")
 
   @@map("notices")
+}
+
+enum IssueReportStatus {
+  PENDING
+  IN_PROGRESS
+  RESOLVED
+  DISMISSED
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model IssueReport {
+  id             String            @id @default(cuid())
+  issueType      String            @map("issue_type")
+  description    String            @db.Text
+  tournamentName String?           @map("tournament_name")
+  deviceModel    String?           @map("device_model")
+  appVersion     String?           @map("app_version")
+  osVersion      String?           @map("os_version")
+  deviceType     String?           @map("device_type")
+  userId         String?           @map("user_id")
+  userName       String?           @map("user_name")
+  userEmail      String?           @map("user_email")
+  userPhone      String?           @map("user_phone")
+  freeFireUid    String?           @map("free_fire_uid")
+  inGameName     String?           @map("in_game_name")
+  status         IssueReportStatus @default(PENDING)
+  adminNotes     String?           @map("admin_notes") @db.Text
+  submittedAt    DateTime          @default(now()) @map("submitted_at")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([userId])
+  @@index([submittedAt])
+  @@map("issue_reports")
+}
+
+model SupportTicket {
+  id            String              @id @default(cuid())
+  subject       String
+  category      String
+  message       String              @db.Text
+  userId        String?             @map("user_id")
+  userName      String?             @map("user_name")
+  userEmail     String?             @map("user_email")
+  userPhone     String?             @map("user_phone")
+  freeFireUid   String?             @map("free_fire_uid")
+  inGameName    String?             @map("in_game_name")
+  deviceModel   String?             @map("device_model")
+  appVersion    String?             @map("app_version")
+  osVersion     String?             @map("os_version")
+  deviceType    String?             @map("device_type")
+  status        SupportTicketStatus @default(OPEN)
+  adminResponse String?             @map("admin_response") @db.Text
+  submittedAt   DateTime            @default(now()) @map("submitted_at")
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([userId])
+  @@index([submittedAt])
+  @@map("support_tickets")
 }

@@ -26,6 +26,7 @@ import { ContentModule } from './content/content.module';
 import { GamesModule } from './games/games.module';
 import { SquadsModule } from './squads/squads.module';
 import { PartnersModule } from './partners/partners.module';
+import { SupportModule } from './support/support.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { PartnersModule } from './partners/partners.module';
     GamesModule,
     SquadsModule,
     PartnersModule,
+    SupportModule,
     RealtimeModule,
     SchedulerModule,
     NotificationsModule,

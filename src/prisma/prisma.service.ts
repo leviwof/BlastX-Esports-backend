@@ -99,6 +99,60 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     await this.$executeRawUnsafe(
       'ALTER TYPE "RegistrationStatus" ADD VALUE IF NOT EXISTS \'WAITLIST\';',
     ).catch(() => {});
+    await this.$executeRawUnsafe(`
+      DO $$ BEGIN
+        CREATE TYPE "IssueReportStatus" AS ENUM ('PENDING', 'IN_PROGRESS', 'RESOLVED', 'DISMISSED');
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE TYPE "SupportTicketStatus" AS ENUM ('OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED');
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `).catch(() => {});
+    await this.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "issue_reports" (
+        "id" TEXT NOT NULL,
+        "issue_type" TEXT NOT NULL,
+        "description" TEXT NOT NULL,
+        "tournament_name" TEXT,
+        "device_model" TEXT,
+        "app_version" TEXT,
+        "os_version" TEXT,
+        "device_type" TEXT,
+        "user_id" TEXT,
+        "user_name" TEXT,
+        "user_email" TEXT,
+        "user_phone" TEXT,
+        "free_fire_uid" TEXT,
+        "in_game_name" TEXT,
+        "status" "IssueReportStatus" NOT NULL DEFAULT 'PENDING',
+        "admin_notes" TEXT,
+        "submitted_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "issue_reports_pkey" PRIMARY KEY ("id")
+      );
+      CREATE TABLE IF NOT EXISTS "support_tickets" (
+        "id" TEXT NOT NULL,
+        "subject" TEXT NOT NULL,
+        "category" TEXT NOT NULL,
+        "message" TEXT NOT NULL,
+        "user_id" TEXT,
+        "user_name" TEXT,
+        "user_email" TEXT,
+        "user_phone" TEXT,
+        "free_fire_uid" TEXT,
+        "in_game_name" TEXT,
+        "device_model" TEXT,
+        "app_version" TEXT,
+        "os_version" TEXT,
+        "device_type" TEXT,
+        "status" "SupportTicketStatus" NOT NULL DEFAULT 'OPEN',
+        "admin_response" TEXT,
+        "submitted_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "support_tickets_pkey" PRIMARY KEY ("id")
+      );
+    `).catch(() => {});
   }
 
   /** Keep retrying until the database answers, then stop the timer. */
