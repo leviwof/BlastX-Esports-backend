@@ -13,7 +13,7 @@ jest.mock('@nestjs/config', () => ({
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { TeamsService } from './teams.service';
 import { TournamentsService } from '../tournaments/tournaments.service';
-import { TeamMemberRole, RegistrationStatus, TournamentStatus, TeamMode } from '@prisma/client';
+import { TeamMemberRole, RegistrationStatus, TournamentStatus, TeamMode, SquadRole } from '@prisma/client';
 
 describe('Teams & Tournaments Features', () => {
   let teamsService: TeamsService;
@@ -40,6 +40,7 @@ describe('Teams & Tournaments Features', () => {
       },
       squadMember: {
         count: jest.fn().mockResolvedValue(0),
+        findUnique: jest.fn(),
       },
       tournamentInvitation: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -242,6 +243,34 @@ describe('Teams & Tournaments Features', () => {
         response: { code: 'PAID_TOURNAMENTS_UNAVAILABLE' },
       });
       expect(mockPrisma.team.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('returns the specified 403 error when a regular squad member registers a team', async () => {
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        gameId: 'game-1',
+        status: TournamentStatus.LIVE,
+        teamMode: TeamMode.DUO,
+        entryFee: 0,
+      });
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-1',
+        gameId: 'game-1',
+        captainId: 'user-1',
+        members: [{ userId: 'user-1', role: TeamMemberRole.CAPTAIN }],
+      });
+      mockPrisma.squadMember.findUnique.mockResolvedValue({ role: SquadRole.MEMBER });
+
+      await expect(
+        tournamentsService.registerUserOrTeam('user-1', 'tour-1', { team_id: 'team-1' }),
+      ).rejects.toMatchObject({
+        status: 403,
+        response: {
+          status: 'error',
+          error_code: 'NON_LEADER_REGISTRATION_FORBIDDEN',
+          message: 'please ask team leader to register the tournament',
+        },
+      });
     });
 
     it('rejects SQUAD registration unless the team has exactly four main players', async () => {

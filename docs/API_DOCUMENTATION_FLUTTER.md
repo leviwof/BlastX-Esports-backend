@@ -141,9 +141,10 @@ All squad and invitation routes require the authenticated user's bearer token.
 A four-main-player SQUAD tournament roster is saved as the player's persistent
 squad after successful tournament registration.
 
-- `GET /squads/me` returns `{ "squad": null }` when the user has no squad, or a
-  squad object with leader, roster limits, and members including each member's
-  game profile.
+- `GET /squads/me` returns `{ "status": "success", "data": { "squad": null } }`
+  when the user has no squad, or the same success envelope containing a squad
+  object with leader, roster limits, creation timestamp, and members including
+  each member's game profile.
 - `POST /squads` idempotently ensures that the authenticated leader's most
   recent confirmed SQUAD tournament roster is saved. The backend derives the
   roster from the registration rather than trusting member IDs from the client.
@@ -696,6 +697,15 @@ The admin queue refreshes automatically while open.
     "status": "CONFIRMED",
     "slot_number": 12
   }
+}
+```
+
+Non-Leader, non-Manager squad members receive `403 Forbidden`:
+```json
+{
+  "status": "error",
+  "error_code": "NON_LEADER_REGISTRATION_FORBIDDEN",
+  "message": "please ask team leader to register the tournament"
 }
 ```
 

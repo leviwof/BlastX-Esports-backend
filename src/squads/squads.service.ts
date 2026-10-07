@@ -166,7 +166,7 @@ export class SquadsService {
 
   async saveMyRegisteredSquad(userId: string) {
     const current = await this.getMySquad(userId);
-    if (current.squad) return current;
+    if (current.data.squad) return current;
 
     const registration = await this.prisma.tournamentRegistration.findFirst({
       where: {
@@ -762,6 +762,7 @@ export class SquadsService {
     tag: string;
     logoUrl: string | null;
     leaderId: string;
+    createdAt: Date;
     ownerRole?: OwnerRole;
     maxMainPlayers: number;
     maxSubstitutes: number;
@@ -786,9 +787,9 @@ export class SquadsService {
       logo_url: squad.logoUrl,
       leader_id: squad.leaderId,
       owner_role: squad.ownerRole ?? OwnerRole.LEADER,
-      game_slug: squad.game.slug,
       max_main_players: squad.maxMainPlayers,
       max_substitutes: squad.maxSubstitutes,
+      created_at: squad.createdAt,
       members: squad.members.map((member) => {
         const profile = member.user.gameProfiles.find(
           (gameProfile) => gameProfile.gameId === squad.game.id,

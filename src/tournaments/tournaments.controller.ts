@@ -19,6 +19,9 @@ import { FilterTournamentQueryDto } from './dto/filter-tournament.dto';
 import { RegisterTournamentDto } from './dto/register-tournament.dto';
 import { CreateTournamentTeamDto } from './dto/create-tournament-team.dto';
 import {
+  RegistrationStatus,
+} from '@prisma/client';
+import {
   toTournamentResponse,
   toTournamentRegistrationResponse,
   TournamentResponse,

@@ -8,6 +8,7 @@ export interface TournamentRegistrationResponse {
   user_id: string;
   team_id: string | null;
   status: string;
+  registration_status?: string;
   slot_number: number;
   final_rank: number | null;
   created_at: Date;

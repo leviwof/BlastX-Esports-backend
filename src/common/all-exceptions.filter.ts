@@ -58,6 +58,21 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
     }
 
+    if (
+      typeof payload === 'object' &&
+      payload !== null &&
+      (payload as any).status === 'error' &&
+      typeof (payload as any).error_code === 'string' &&
+      typeof (payload as any).message === 'string'
+    ) {
+      response.status(status).json({
+        status: 'error',
+        error_code: (payload as any).error_code,
+        message: (payload as any).message,
+      });
+      return;
+    }
+
     const responseBody: any = {
       success: false,
       status: 'error',

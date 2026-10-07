@@ -73,10 +73,82 @@ describe('SquadsService', () => {
     service = new SquadsService(prisma as PrismaService, events as unknown as EventEmitter2);
   });
 
-  it('returns an explicit empty squad for a user without squad membership', async () => {
+  it('returns the success envelope with a null squad when the user has no membership', async () => {
     prisma.squadMember.findUnique.mockResolvedValue(null);
 
-    await expect(service.getMySquad('user-1')).resolves.toEqual({ squad: null });
+    await expect(service.getMySquad('user-1')).resolves.toEqual({
+      status: 'success',
+      data: { squad: null },
+    });
+  });
+
+  it('returns the specified persistent squad response shape', async () => {
+    const joinedAt = new Date('2026-02-15T10:00:00.000Z');
+    const createdAt = new Date('2026-02-15T10:00:00.000Z');
+    prisma.squadMember.findUnique.mockResolvedValue({ squadId: 'squad-1' });
+    prisma.squad.findUnique.mockResolvedValue({
+      id: 'squad-1',
+      name: 'ALPHA ELITE',
+      tag: 'AEL',
+      logoUrl: 'https://cdn.blastx.gg/logos/squad_alpha.png',
+      leaderId: 'leader-1',
+      ownerRole: 'LEADER',
+      maxMainPlayers: 4,
+      maxSubstitutes: 2,
+      createdAt,
+      game: { id: 'game-1', slug: 'free_fire', name: 'Free Fire' },
+      members: [
+        {
+          userId: 'leader-1',
+          role: 'LEADER',
+          rosterType: 'MAIN',
+          joinedAt,
+          user: {
+            id: 'leader-1',
+            name: 'Phoenix Captain',
+            profilePic: 'https://cdn.blastx.gg/avatars/p1.png',
+            gameProfiles: [
+              { gameId: 'game-1', inGameName: '★PHOENIX★', inGameUid: '827364129' },
+            ],
+          },
+        },
+      ],
+    });
+
+    await expect(service.getMySquad('leader-1')).resolves.toEqual({
+      status: 'success',
+      data: {
+        squad: {
+          id: 'squad-1',
+          name: 'ALPHA ELITE',
+          tag: 'AEL',
+          logo_url: 'https://cdn.blastx.gg/logos/squad_alpha.png',
+          leader_id: 'leader-1',
+          owner_role: 'LEADER',
+          max_main_players: 4,
+          max_substitutes: 2,
+          created_at: createdAt,
+          members: [
+            {
+              user_id: 'leader-1',
+              name: 'Phoenix Captain',
+              role: 'LEADER',
+              roster_type: 'MAIN',
+              joined_at: joinedAt,
+              user: {
+                id: 'leader-1',
+                name: 'Phoenix Captain',
+                profile_pic: 'https://cdn.blastx.gg/avatars/p1.png',
+                game_profile: {
+                  in_game_name: '★PHOENIX★',
+                  in_game_uid: '827364129',
+                },
+              },
+            },
+          ],
+        },
+      },
+    });
   });
 
   it('enforces leader-only squad management', async () => {

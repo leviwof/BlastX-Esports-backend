@@ -143,6 +143,7 @@ Emails are normalised server-side (`trim` + lowercase), so send them as typed.
 | `GET` | `/v1/tournaments/:id/registered-teams` | `{ status, total, data }` team cards for the registered-team grid |
 | `GET` | `/v1/tournaments/:id/leaderboard` | `[{ rank, ... }]` |
 | `GET` | `/v1/tournaments/:id/matches` | Match list for a tournament |
+| `POST` | `/v1/tournaments/:id/register` | Team registration is restricted to the squad Leader or Manager; other members receive `403` with `error_code: "NON_LEADER_REGISTRATION_FORBIDDEN"` |
 
 ### Authenticated (Bearer token)
 
@@ -152,7 +153,7 @@ Emails are normalised server-side (`trim` + lowercase), so send them as typed.
 | `PATCH` | `/v1/users/me` | `{ name?, phone?, profile_pic? }`; `phone` must be a 10-digit Indian mobile number starting with 6–9 (or `null` to clear it) |
 | `GET` | `/v1/users/me/game-profile?game_slug=free_fire` | In-game identity |
 | `PUT` | `/v1/users/me/game-profile` | `{ game_slug, in_game_uid, in_game_name }` — UID must be **8–12 digits** |
-| `GET` | `/v1/squads/me` | Current persistent squad and roster, or `{ squad: null }`; a 4-player SQUAD tournament roster is saved after successful registration |
+| `GET` | `/v1/squads/me` | `{ status: "success", data: { squad } }`; `squad` is strictly `null` when the user has no persistent squad, otherwise it includes roster, role, limits, and creation timestamp |
 | `POST` | `/v1/squads` | Idempotently ensure/save the caller's most recent confirmed SQUAD tournament roster; source roster is read from the authenticated user's registration |
 | `POST` | `/v1/squads/:squadId/members/:userId` | Leader-only member removal |
 | `POST` | `/v1/squads/:squadId/transfer-leader` | Leader-only `{ new_leader_id }` |
