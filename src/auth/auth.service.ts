@@ -36,9 +36,18 @@ export class AuthService {
       throw new UnauthorizedException('Invalid admin credentials');
     }
 
-    const user = await this.users.findByEmail(configuredEmail);
-    if (!user || user.role !== 'ADMIN' || !user.isActive) {
-      throw new UnauthorizedException('Invalid admin credentials');
+    let user = await this.users.findByEmail(configuredEmail);
+    if (!user) {
+      user = await this.users.create({
+        name: 'BlastiX Admin',
+        email: configuredEmail,
+        role: 'ADMIN',
+      });
+    } else if (user.role !== 'ADMIN' || !user.isActive) {
+      user = await this.users.update(user.id, {
+        role: 'ADMIN',
+        isActive: true,
+      });
     }
     return this.issue(user);
   }
