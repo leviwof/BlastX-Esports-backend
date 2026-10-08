@@ -395,10 +395,22 @@ export class MatchesService {
     });
   }
 
-  async getGroupedMatchesForTournament(tournamentId: string) {
+  async getGroupedMatchesForTournament(tournamentId: string, currentUserId?: string) {
     const tournament = await this.prisma.tournament.findUnique({
       where: { id: tournamentId },
       include: {
+        registrations: {
+          include: {
+            user: true,
+            team: {
+              include: {
+                members: {
+                  include: { user: true },
+                },
+              },
+            },
+          },
+        },
         matches: {
           include: {
             tournament: { select: { roomId: true, roomPassword: true, roomReleasedAt: true } },
@@ -416,42 +428,245 @@ export class MatchesService {
     });
 
     if (!tournament) {
-      throw new NotFoundException('Tournament not found');
+      throw new NotFoundException(`Tournament '${tournamentId}' not found`);
     }
 
+    const maxTeamsPerGroup =
+      tournament.format === TournamentFormat.CLASH_SQUAD ||
+      (tournament.teamMode as string) === 'DUO' ||
+      (tournament.teamMode as string) === 'SOLO'
+        ? 2
+        : 12;
+
+    // Determine caller's registration status and team info
+    const userReg = currentUserId
+      ? tournament.registrations.find(
+          (r) =>
+            r.userId === currentUserId ||
+            r.team?.members?.some((m) => m.userId === currentUserId),
+        )
+      : null;
+
+    const isUserRegistered = !!userReg && userReg.status === RegistrationStatus.CONFIRMED;
+
+    let userContext: any = null;
+    let userTeamId: string | null = null;
+
+    if (userReg) {
+      userTeamId = userReg.teamId || userReg.userId;
+      const userTeamName = userReg.team?.name || userReg.user?.name || 'My Team';
+
+      // Find match user belongs to
+      const userMatch =
+        tournament.matches.find((m) =>
+          m.results.some(
+            (r) =>
+              r.registrationId === userReg.id ||
+              r.registration.teamId === userReg.teamId ||
+              r.registration.userId === userReg.userId,
+          ),
+        ) || tournament.matches[0] || null;
+
+      if (userMatch) {
+        const isDisqualified =
+          userReg.status === RegistrationStatus.DISQUALIFIED ||
+          userReg.status === RegistrationStatus.CANCELLED;
+
+        const isPublished = !!(
+          userMatch.roomReleasedAt && userMatch.roomReleasedAt <= new Date()
+        );
+
+        const revealAt = userMatch.roomReleasedAt
+          ? userMatch.roomReleasedAt.toISOString()
+          : null;
+
+        const startsAt = userMatch.scheduledAt
+          ? userMatch.scheduledAt.toISOString()
+          : null;
+
+        // Security Guard: Room ID and Password MUST ONLY be sent to logged-in users who belong to that group AND is_published == true AND not disqualified!
+        let roomId: string | null = null;
+        let password: string | null = null;
+
+        if (isUserRegistered && !isDisqualified && isPublished) {
+          roomId = userMatch.roomId || tournament.roomId || null;
+          password = userMatch.roomPassword || tournament.roomPassword || null;
+        }
+
+        const opponentTeamNames = userMatch.results
+          .map((r) => r.registration.team?.name || r.registration.user?.name)
+          .filter((name): name is string => !!name && name !== userTeamName);
+
+        userContext = {
+          team_id: userTeamId,
+          team_name: userTeamName,
+          round_id: userMatch.round
+            ? userMatch.round.toLowerCase().replace(/\s+/g, '_')
+            : 'round_1',
+          round_name: userMatch.round || 'Round 1 - Qualifiers',
+          group_id: userMatch.groupName
+            ? userMatch.groupName.toLowerCase().replace(/\s+/g, '_')
+            : 'group_101',
+          group_name: userMatch.groupName || 'Group 1',
+          status: userMatch.status.toLowerCase(),
+          map: userMatch.map || tournament.map || 'Bermuda',
+          opponent_team_names: opponentTeamNames,
+          room_id: roomId,
+          password: password,
+          is_published: isPublished,
+          reveal_at: revealAt,
+          starts_at: startsAt,
+        };
+      }
+    }
+
+    // Build Round & Group Structure
+    const roundsMap = new Map<string, any>();
+
+    for (let i = 0; i < tournament.matches.length; i++) {
+      const m = tournament.matches[i];
+      const roundName = m.round || 'Round 1 - Qualifiers';
+      const roundId = roundName.toLowerCase().replace(/\s+/g, '_');
+
+      if (!roundsMap.has(roundId)) {
+        roundsMap.set(roundId, {
+          id: roundId,
+          round_name: roundName,
+          round_number: roundsMap.size + 1,
+          status: m.status.toLowerCase(),
+          groups: [],
+        });
+      }
+
+      const currentRound = roundsMap.get(roundId);
+      const isPublished = !!(m.roomReleasedAt && m.roomReleasedAt <= new Date());
+
+      const groupTeams: any[] = m.results.map((r) => {
+        const tId = r.registration.teamId || r.registration.userId;
+        const tName = r.registration.team?.name || r.registration.user?.name || 'Team';
+        const tLogo = r.registration.team?.logoUrl || r.registration.user?.profilePic || null;
+        const isMyTeam = !!userTeamId && tId === userTeamId;
+
+        return {
+          id: tId,
+          name: tName,
+          logo_url: tLogo,
+          is_my_team: isMyTeam,
+        };
+      });
+
+      // If no match results exist yet, populate teams from tournament registrations
+      if (groupTeams.length === 0 && tournament.registrations.length > 0) {
+        for (const reg of tournament.registrations.slice(0, maxTeamsPerGroup)) {
+          const tId = reg.teamId || reg.userId;
+          const tName = reg.team?.name || reg.user?.name || 'Team';
+          const tLogo = reg.team?.logoUrl || reg.user?.profilePic || null;
+          const isMyTeam = !!userTeamId && tId === userTeamId;
+
+          groupTeams.push({
+            id: tId,
+            name: tName,
+            logo_url: tLogo,
+            is_my_team: isMyTeam,
+          });
+        }
+      }
+
+      // SECURITY RULE: General groups list MUST ALWAYS have room_id = null and password = null!
+      currentRound.groups.push({
+        id: m.id || (m.groupName ? m.groupName.toLowerCase().replace(/\s+/g, '_') : `group_${i + 1}`),
+        group_name: m.groupName || `Group ${currentRound.groups.length + 1}`,
+        group_number: currentRound.groups.length + 1,
+        map: m.map || tournament.map || 'Bermuda',
+        status: m.status.toLowerCase(),
+        starts_at: m.scheduledAt ? m.scheduledAt.toISOString() : null,
+        ended_at: m.endedAt ? m.endedAt.toISOString() : null,
+        is_published: isPublished,
+        room_id: null, // SECURITY RULE: Credentials NEVER in general groups array
+        password: null, // SECURITY RULE: Credentials NEVER in general groups array
+        winner_team_name: m.winnerTeamName || null,
+        top_mvp_name: m.topKillerName || null,
+        teams: groupTeams,
+      });
+    }
+
+    // Default round if no matches created yet
+    if (roundsMap.size === 0) {
+      const defaultTeams = tournament.registrations.map((reg) => {
+        const tId = reg.teamId || reg.userId;
+        const tName = reg.team?.name || reg.user?.name || 'Team';
+        const tLogo = reg.team?.logoUrl || reg.user?.profilePic || null;
+        const isMyTeam = !!userTeamId && tId === userTeamId;
+
+        return {
+          id: tId,
+          name: tName,
+          logo_url: tLogo,
+          is_my_team: isMyTeam,
+        };
+      });
+
+      roundsMap.set('round_1', {
+        id: 'round_1',
+        round_name: 'Round 1 - Qualifiers',
+        round_number: 1,
+        status: tournament.status.toLowerCase(),
+        groups: [
+          {
+            id: 'group_101',
+            group_name: 'Group 1',
+            group_number: 1,
+            map: tournament.map || 'Bermuda',
+            status: tournament.status.toLowerCase(),
+            starts_at: tournament.startsAt ? tournament.startsAt.toISOString() : null,
+            ended_at: null,
+            is_published: false,
+            room_id: null,
+            password: null,
+            winner_team_name: null,
+            top_mvp_name: null,
+            teams: defaultTeams,
+          },
+        ],
+      });
+    }
+
+    const rounds = Array.from(roundsMap.values());
+
+    // Legacy mapped matches and groups for backwards compatibility
     const rawMatches = tournament.matches;
     const mappedMatches: MatchResponse[] = rawMatches.map((m: any) => toMatchResponse(m));
-
-    const groupsMap = new Map<string, any>();
+    const legacyGroupsMap = new Map<string, any>();
 
     for (const m of mappedMatches) {
-      const gName = m.group_name || m.group || 'Group A';
-      if (!groupsMap.has(gName)) {
-        groupsMap.set(gName, {
+      const gName = m.group_name || m.group || 'Group 1';
+      if (!legacyGroupsMap.has(gName)) {
+        legacyGroupsMap.set(gName, {
           group_name: gName,
           group: gName,
-          room_id: m.room_id,
-          room_password: m.room_password,
-          password: m.password,
+          room_id: null,
+          room_password: null,
+          password: null,
           is_room_released: m.is_room_released,
           matches: [],
         });
       }
-      const grp = groupsMap.get(gName);
+      const grp = legacyGroupsMap.get(gName);
       grp.matches.push(m);
-      if (m.room_id) {
-        grp.room_id = m.room_id;
-        grp.room_password = m.room_password;
-        grp.password = m.password;
-        grp.is_room_released = m.is_room_released;
-      }
     }
 
-    const groups = Array.from(groupsMap.values());
+    const legacyGroups = Array.from(legacyGroupsMap.values());
 
     return {
+      status: 'success',
+      tournament_id: tournamentId,
+      is_user_registered: isUserRegistered,
+      max_teams_per_group: maxTeamsPerGroup,
+      user_context: userContext,
+      rounds: rounds,
+      data: mappedMatches,
       matches: mappedMatches,
-      groups,
+      groups: legacyGroups,
     };
   }
 }
