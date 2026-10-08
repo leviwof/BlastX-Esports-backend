@@ -1098,19 +1098,28 @@ export class TournamentsService implements OnModuleInit {
       if (!registration && mainCount === 4) {
         const tourney = await this.prisma.tournament.findUnique({ where: { id: tournamentId } });
         if (tourney) {
-          registration = await this.prisma.tournamentRegistration.create({
-            data: {
-              tournamentId,
-              userId: formingTeam.captainId,
-              teamId: formingTeam.id,
-              status: RegistrationStatus.CONFIRMED,
-              slotNumber: tourney.registeredCount + 1,
-            },
-          });
-          await this.prisma.tournament.update({
-            where: { id: tournamentId },
-            data: { registeredCount: { increment: 1 } },
-          });
+          try {
+            registration = await this.prisma.tournamentRegistration.create({
+              data: {
+                tournamentId,
+                userId: formingTeam.captainId,
+                teamId: formingTeam.id,
+                status: RegistrationStatus.CONFIRMED,
+                slotNumber: tourney.registeredCount + 1,
+              },
+            });
+            await this.prisma.tournament.update({
+              where: { id: tournamentId },
+              data: { registeredCount: { increment: 1 } },
+            });
+          } catch {
+            registration = await this.prisma.tournamentRegistration.findFirst({
+              where: {
+                tournamentId,
+                OR: [{ teamId: formingTeam.id }, { userId: formingTeam.captainId }],
+              },
+            });
+          }
         }
       }
 

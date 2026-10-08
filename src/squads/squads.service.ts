@@ -198,25 +198,30 @@ export class SquadsService {
     const ownerRole = dto.owner_role ?? OwnerRole.LEADER;
     const squadRole = ownerRole === OwnerRole.MANAGER ? SquadRole.MANAGER : SquadRole.LEADER;
 
-    const squad = await this.prisma.squad.create({
-      data: {
-        gameId: game.id,
-        name: dto.name.trim(),
-        tag: dto.tag?.trim() || '',
-        leaderId: userId,
-        ownerRole: ownerRole,
-        maxMainPlayers: 4,
-        maxSubstitutes: 2,
-        members: {
-          create: {
-            userId,
-            role: squadRole,
-            rosterType: SquadRosterType.MAIN,
+    let squad: any;
+    try {
+      squad = await this.prisma.squad.create({
+        data: {
+          gameId: game.id,
+          name: dto.name.trim(),
+          tag: dto.tag?.trim() || '',
+          leaderId: userId,
+          ownerRole: ownerRole,
+          maxMainPlayers: 4,
+          maxSubstitutes: 2,
+          members: {
+            create: {
+              userId,
+              role: squadRole,
+              rosterType: SquadRosterType.MAIN,
+            },
           },
         },
-      },
-      include: squadInclude,
-    });
+        include: squadInclude,
+      });
+    } catch {
+      throw new BadRequestException('User already owns or belongs to a persistent squad for this game.');
+    }
 
     return {
       status: 'success',
