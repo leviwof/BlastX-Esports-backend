@@ -7,7 +7,12 @@ import {
   OnModuleInit,
   ServiceUnavailableException,
   BadGatewayException,
+  UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
+import { Request, Response } from 'express';
+import { Readable } from 'stream';
+import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma, ChallengeType, ChallengeStatus } from '@prisma/client';
 import {
@@ -35,8 +40,13 @@ import { JWT } from 'google-auth-library';
 @Injectable()
 export class ChallengesService implements OnModuleInit {
   private readonly logger = new Logger(ChallengesService.name);
+  private cachedAccessToken: string | null = null;
+  private accessTokenExpiresAt = 0;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwtService?: JwtService,
+  ) {}
 
   async onModuleInit() {
     await this.seedDefaultChallenges();
@@ -584,6 +594,10 @@ export class ChallengesService implements OnModuleInit {
   }
 
   private async getGoogleDriveAccessToken(): Promise<string | null> {
+    if (this.cachedAccessToken && Date.now() < this.accessTokenExpiresAt) {
+      return this.cachedAccessToken;
+    }
+
     const clean = (val?: string) => val?.trim().replace(/^["']|["']$/g, '') || '';
     const refreshToken = clean(process.env.GOOGLE_DRIVE_REFRESH_TOKEN);
     const clientId = clean(process.env.GOOGLE_DRIVE_CLIENT_ID) || clean(process.env.GOOGLE_CLIENT_IDS?.split(',')[0]);
@@ -604,7 +618,10 @@ export class ChallengesService implements OnModuleInit {
         });
 
         if (tokenRes.ok) {
-          const data = (await tokenRes.json()) as { access_token: string };
+          const data = (await tokenRes.json()) as { access_token: string; expires_in?: number };
+          this.cachedAccessToken = data.access_token;
+          const expiresInSec = data.expires_in ?? 3500;
+          this.accessTokenExpiresAt = Date.now() + (expiresInSec - 300) * 1000;
           return data.access_token;
         } else {
           const err = await tokenRes.text();
@@ -622,6 +639,128 @@ export class ChallengesService implements OnModuleInit {
     }
 
     return null;
+  }
+
+  async streamProofVideo(
+    fileId: string,
+    req: Request,
+    res: Response,
+    tokenQueryParam?: string,
+  ): Promise<void> {
+    // 1. Validate fileId format
+    if (!/^[A-Za-z0-9_-]+$/.test(fileId)) {
+      throw new BadRequestException('Invalid file ID format');
+    }
+
+    // 2. Auth check if token provided in query param or header
+    const token = tokenQueryParam || req.headers.authorization?.replace(/^Bearer\s+/i, '');
+    if (token && this.jwtService) {
+      try {
+        await this.jwtService.verifyAsync(token);
+      } catch {
+        throw new UnauthorizedException('Invalid or expired video stream token');
+      }
+    }
+
+    // 3. Security: check if fileId exists in DB (UserChallenge, IssueReport, SupportTicket)
+    const foundInUserChallenge = await this.prisma.userChallenge.findFirst({
+      where: { proofUrl: { contains: fileId } },
+      select: { id: true },
+    });
+
+    const foundInIssueReport = !foundInUserChallenge
+      ? await this.prisma.issueReport.findFirst({
+          where: { description: { contains: fileId } },
+          select: { id: true },
+        })
+      : null;
+
+    const foundInSupportTicket =
+      !foundInUserChallenge && !foundInIssueReport
+        ? await this.prisma.supportTicket.findFirst({
+            where: { message: { contains: fileId } },
+            select: { id: true },
+          })
+        : null;
+
+    if (!foundInUserChallenge && !foundInIssueReport && !foundInSupportTicket) {
+      throw new NotFoundException('Proof recording file not found in database or unauthorized');
+    }
+
+    // 4. Retrieve cached Google Drive OAuth Access Token
+    const accessToken = await this.getGoogleDriveAccessToken();
+    if (!accessToken) {
+      throw new ServiceUnavailableException('Google Drive video storage is unavailable');
+    }
+
+    // 5. Upstream HTTP request to Google Drive API with Range header forwarding
+    const driveUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${accessToken}`,
+    };
+
+    if (req.headers.range) {
+      headers['Range'] = req.headers.range;
+    }
+
+    let driveRes: globalThis.Response;
+    try {
+      driveRes = await fetch(driveUrl, { method: 'GET', headers });
+    } catch (err) {
+      this.logger.error(`Failed to connect to Google Drive video stream for ${fileId}: ${err instanceof Error ? err.message : String(err)}`);
+      throw new BadGatewayException('Could not connect to video storage provider');
+    }
+
+    if (!driveRes.ok && driveRes.status !== 206) {
+      const errBody = await driveRes.text();
+      this.logger.error(`Google Drive stream returned status ${driveRes.status} for ${fileId}: ${errBody}`);
+      if (driveRes.status === 404) {
+        throw new NotFoundException('File not found on Google Drive');
+      }
+      if (driveRes.status === 403 || driveRes.status === 401) {
+        throw new ForbiddenException('Access denied by Google Drive or storage quota exceeded');
+      }
+      throw new BadGatewayException(`Google Drive returned status ${driveRes.status}`);
+    }
+
+    // 6. Set response headers & CORS
+    res.status(driveRes.status);
+    const origin = req.headers.origin || 'https://blasti-x-esports.vercel.app';
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+
+    const contentType = driveRes.headers.get('content-type');
+    if (contentType && contentType !== 'application/octet-stream') {
+      res.setHeader('Content-Type', contentType);
+    } else {
+      res.setHeader('Content-Type', 'video/mp4');
+    }
+
+    const contentLength = driveRes.headers.get('content-length');
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+
+    const contentRange = driveRes.headers.get('content-range');
+    if (contentRange) {
+      res.setHeader('Content-Range', contentRange);
+    }
+
+    // 7. Pipe body stream and handle client abort
+    if (driveRes.body) {
+      const nodeStream = Readable.fromWeb(driveRes.body as any);
+      req.on('close', () => {
+        try {
+          nodeStream.destroy();
+        } catch {}
+      });
+      nodeStream.pipe(res);
+    } else {
+      res.end();
+    }
   }
 
   /**
