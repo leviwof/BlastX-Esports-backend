@@ -9,7 +9,7 @@ import { SubstitutesToggleDto } from './dto/substitutes-toggle.dto';
 import { TransferCaptainDto } from './dto/transfer-captain.dto';
 import { toTeamResponse, TeamResponse } from './team.mapper';
 
-@Controller('teams')
+@Controller(['teams', 'api/teams', 'tournaments/teams', 'api/tournaments/teams', 'v1/tournaments/teams'])
 @UseGuards(JwtAuthGuard)
 export class TeamsController {
   constructor(private readonly teamsService: TeamsService) {}

@@ -92,6 +92,7 @@ export interface TournamentResponse {
   created_at: Date;
   updated_at: Date;
   is_registered?: boolean;
+  isRegistered?: boolean;
   my_registration?: TournamentRegistrationResponse | null;
 }
 
@@ -156,7 +157,12 @@ export const toTournamentResponse = (
   let myRegistration: TournamentRegistrationResponse | null = null;
 
   if (currentUserId && t.registrations) {
-    const found = t.registrations.find((r) => r.userId === currentUserId && r.status === 'CONFIRMED');
+    const found = t.registrations.find((r) => {
+      if (r.status !== 'CONFIRMED') return false;
+      if (r.userId === currentUserId) return true;
+      if ((r as any).team?.members?.some((m: any) => m.userId === currentUserId)) return true;
+      return false;
+    });
     if (found) {
       isRegistered = true;
       myRegistration = toTournamentRegistrationResponse(found);
@@ -229,7 +235,9 @@ export const toTournamentResponse = (
     created_by: t.createdBy,
     created_at: t.createdAt,
     updated_at: t.updatedAt,
-    ...(currentUserId !== undefined ? { is_registered: isRegistered, my_registration: myRegistration } : {}),
+    is_registered: isRegistered,
+    isRegistered: isRegistered,
+    ...(currentUserId !== undefined ? { my_registration: myRegistration } : {}),
   };
 
   // Room credentials are only surfaced on the admin path or the dedicated /room endpoint.

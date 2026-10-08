@@ -263,7 +263,13 @@ export class TeamsService {
         select: { teamId: true },
       });
       if (existingTournamentTeam && existingTournamentTeam.teamId !== team.id) {
-        throw new BadRequestException('You are already a member of another team in this tournament');
+        throw new BadRequestException({
+          success: false,
+          status: 'error',
+          code: 'ALREADY_IN_TEAM',
+          error_code: 'ALREADY_IN_TEAM',
+          message: 'You have already joined/registered for this tournament.',
+        });
       }
     }
 

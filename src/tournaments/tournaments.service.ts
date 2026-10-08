@@ -1294,10 +1294,11 @@ export class TournamentsService implements OnModuleInit {
     });
     if (existingTournamentMembership) {
       throw new BadRequestException({
+        success: false,
         status: 'error',
         code: 'ALREADY_IN_TEAM',
         error_code: 'ALREADY_IN_TEAM',
-        message: 'You are already part of a team in this tournament.',
+        message: 'You have already joined/registered for this tournament.',
       });
     }
 

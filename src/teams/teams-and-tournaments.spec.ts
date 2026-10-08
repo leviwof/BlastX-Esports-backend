@@ -566,7 +566,7 @@ describe('Teams & Tournaments Features', () => {
         tournament_id: 'tour-1',
         is_registered: false,
         slot_number: null,
-        registration_status: null,
+        registration_status: 'FORMING',
       });
     });
 

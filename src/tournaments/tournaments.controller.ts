@@ -48,13 +48,25 @@ export class TournamentsController {
 
   @Public()
   @Get()
-  async getTournaments(@Query() query: FilterTournamentQueryDto) {
+  async getTournaments(@Query() query: FilterTournamentQueryDto, @Req() req: Request) {
+    let currentUserId: string | undefined;
+    const authHeader = req.headers.authorization;
+    if (authHeader) {
+      try {
+        const token = authHeader.replace(/^Bearer\s+/i, '');
+        const payload = await this.jwtService.verifyAsync<JwtUser>(token);
+        currentUserId = payload.sub;
+      } catch {
+        // Token invalid, ignore for public view
+      }
+    }
+
     const result = await this.tournamentsService.getTournaments(query);
     return {
       status: 'success',
       // API clients unwrap this envelope, so pagination must live in `data`.
       data: {
-        items: result.items.map((item) => toTournamentResponse(item)),
+        items: result.items.map((item) => toTournamentResponse(item, currentUserId)),
         counts: result.counts,
         page: result.page,
         limit: result.limit,
@@ -207,7 +219,7 @@ export class TournamentsController {
     return this.tournamentsService.getTournamentBracket(id);
   }
 
-  @Get(':id/my-team')
+  @Get([':id/my-team', ':id/teams/me'])
   @UseGuards(JwtAuthGuard)
   async getMyTeam(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     const team = await this.tournamentsService.getMyTeamForTournament(user.sub, id);
