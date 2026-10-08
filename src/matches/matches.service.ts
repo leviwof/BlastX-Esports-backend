@@ -669,4 +669,221 @@ export class MatchesService {
       groups: legacyGroups,
     };
   }
+
+  async createGroupMatch(adminId: string, roundId: string, dto: any): Promise<Match> {
+    const groupName = dto.group_name || 'Group 1';
+    const roundName = dto.round_name || roundId.replace(/_/g, ' ').toUpperCase();
+
+    let tournamentId = dto.tournament_id;
+    if (!tournamentId) {
+      const firstTourn = await this.prisma.tournament.findFirst({ select: { id: true } });
+      tournamentId = firstTourn?.id || 'default_tournament';
+    }
+
+    const count = await this.prisma.match.count({ where: { tournamentId } });
+
+    return this.prisma.match.create({
+      data: {
+        tournamentId,
+        matchNumber: count + 1,
+        round: roundName,
+        groupName: groupName,
+        map: dto.map || 'Bermuda',
+        scheduledAt: dto.starts_at ? new Date(dto.starts_at) : new Date(),
+        status: MatchStatus.SCHEDULED,
+      },
+    });
+  }
+
+  async assignTeamsToGroup(adminId: string, groupId: string, teamIds: string[]) {
+    let match = await this.prisma.match.findUnique({ where: { id: groupId } });
+    if (!match) {
+      match = await this.prisma.match.findFirst({ where: { groupName: groupId } });
+    }
+    if (!match) {
+      throw new NotFoundException(`Group match '${groupId}' not found`);
+    }
+
+    const registrations = await this.prisma.tournamentRegistration.findMany({
+      where: {
+        tournamentId: match.tournamentId,
+        OR: [
+          { teamId: { in: teamIds } },
+          { userId: { in: teamIds } },
+          { id: { in: teamIds } },
+        ],
+      },
+    });
+
+    for (const reg of registrations) {
+      await this.prisma.matchResult.upsert({
+        where: {
+          unique_match_registration: {
+            matchId: match.id,
+            registrationId: reg.id,
+          },
+        },
+        update: {},
+        create: {
+          matchId: match.id,
+          registrationId: reg.id,
+          placement: 0,
+          kills: 0,
+        },
+      });
+    }
+
+    return {
+      status: 'success',
+      message: `Successfully assigned ${registrations.length} teams to group ${groupId}`,
+      assigned_count: registrations.length,
+    };
+  }
+
+  async setGroupRoomCredentials(adminId: string, groupId: string, dto: any) {
+    let match = await this.prisma.match.findUnique({
+      where: { id: groupId },
+      include: { tournament: true },
+    });
+    if (!match) {
+      match = await this.prisma.match.findFirst({
+        where: { groupName: groupId },
+        include: { tournament: true },
+      });
+    }
+
+    if (!match) {
+      throw new NotFoundException(`Group match '${groupId}' not found`);
+    }
+
+    const roomId = dto.room_id || dto.roomId;
+    const password = dto.password || dto.room_password;
+    const isPublished = dto.is_published ?? true;
+    const releaseTime = dto.visible_from ? new Date(dto.visible_from) : new Date();
+
+    const updatedMatch = await this.prisma.match.update({
+      where: { id: match.id },
+      data: {
+        roomId,
+        roomPassword: password,
+        roomReleasedAt: isPublished ? releaseTime : null,
+      },
+    });
+
+    if (isPublished) {
+      this.eventEmitter.emit('room.released', {
+        tournamentId: match.tournamentId,
+        tournamentTitle: match.tournament?.title || 'Tournament',
+        groupId: groupId,
+      });
+    }
+
+    return {
+      status: 'success',
+      group_id: match.id,
+      room_id: updatedMatch.roomId,
+      password: updatedMatch.roomPassword,
+      is_published: !!updatedMatch.roomReleasedAt,
+      visible_from: updatedMatch.roomReleasedAt,
+    };
+  }
+
+  async recordGroupResults(adminId: string, groupId: string, dto: any) {
+    let match = await this.prisma.match.findUnique({ where: { id: groupId } });
+    if (!match) {
+      match = await this.prisma.match.findFirst({ where: { groupName: groupId } });
+    }
+
+    if (match) {
+      await this.prisma.match.update({
+        where: { id: match.id },
+        data: {
+          winnerTeamName: dto.winner_team_name || dto.winner_team_id || null,
+          topKillerName: dto.top_mvp_name || null,
+          status: MatchStatus.COMPLETED,
+        },
+      });
+
+      if (dto.team_scores && Array.isArray(dto.team_scores)) {
+        for (const score of dto.team_scores) {
+          const reg = await this.prisma.tournamentRegistration.findFirst({
+            where: {
+              tournamentId: match.tournamentId,
+              OR: [{ teamId: score.team_id }, { userId: score.team_id }, { id: score.team_id }],
+            },
+          });
+          if (reg) {
+            await this.prisma.matchResult.upsert({
+              where: {
+                unique_match_registration: {
+                  matchId: match.id,
+                  registrationId: reg.id,
+                },
+              },
+              update: {
+                kills: score.kills || 0,
+                placementPoints: score.placement_points || 0,
+                totalPoints: score.total_points || (score.kills || 0) + (score.placement_points || 0),
+              },
+              create: {
+                matchId: match.id,
+                registrationId: reg.id,
+                placement: score.placement || 1,
+                kills: score.kills || 0,
+                placementPoints: score.placement_points || 0,
+                totalPoints: score.total_points || (score.kills || 0) + (score.placement_points || 0),
+              },
+            });
+          }
+        }
+      }
+
+      await this.rebuildLeaderboardCache(match.tournamentId);
+
+      return {
+        status: 'success',
+        message: `Results recorded for group ${groupId}`,
+      };
+    }
+
+    if (dto.results) {
+      return this.recordMatchResults(adminId, groupId, dto);
+    }
+
+    throw new NotFoundException(`Group match '${groupId}' not found`);
+  }
+
+  async updateTeamStatusInTournament(adminId: string, tournamentId: string, teamId: string, statusInput: string) {
+    const statusMap: Record<string, RegistrationStatus> = {
+      QUALIFIED: RegistrationStatus.CONFIRMED,
+      DISQUALIFIED: RegistrationStatus.DISQUALIFIED,
+      ELIMINATED: RegistrationStatus.CANCELLED,
+      REGISTERED: RegistrationStatus.CONFIRMED,
+    };
+
+    const targetStatus = statusMap[statusInput.toUpperCase()] || RegistrationStatus.CONFIRMED;
+
+    const reg = await this.prisma.tournamentRegistration.findFirst({
+      where: {
+        tournamentId,
+        OR: [{ teamId }, { userId: teamId }, { id: teamId }],
+      },
+    });
+
+    if (!reg) {
+      throw new NotFoundException(`Team '${teamId}' registration in tournament '${tournamentId}' not found`);
+    }
+
+    const updated = await this.prisma.tournamentRegistration.update({
+      where: { id: reg.id },
+      data: { status: targetStatus },
+    });
+
+    return {
+      status: 'success',
+      team_id: teamId,
+      tournament_id: tournamentId,
+      registration_status: updated.status,
+    };
+  }
 }
