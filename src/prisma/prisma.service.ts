@@ -1,5 +1,6 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { healthStatus } from '../common/health-status';
 
 /**
@@ -19,7 +20,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private connected = false;
   private lastFailure: string | null = null;
 
-  constructor() {
+  constructor(@Optional() private readonly eventEmitter?: EventEmitter2) {
     let dbUrl = process.env.DATABASE_URL || '';
     if (dbUrl && !dbUrl.includes('connection_limit')) {
       const separator = dbUrl.includes('?') ? '&' : '?';
@@ -29,8 +30,70 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async onModuleInit(): Promise<void> {
+    this.registerMutationMiddleware();
     await this.tryConnect();
     if (!this.connected) this.scheduleRetry();
+  }
+
+  private registerMutationMiddleware(): void {
+    (this as any).$use?.(async (params: any, next: (params: any) => Promise<any>) => {
+      const result = await next(params);
+
+      const action = params.action;
+      const isMutation = ['create', 'update', 'updateMany', 'delete', 'deleteMany', 'upsert'].includes(action);
+
+      if (isMutation && this.eventEmitter) {
+        try {
+          const modelName = params.model ? params.model.toLowerCase() : '';
+          const upperAction = action.toUpperCase();
+
+          const entityId = result?.id || params.args?.where?.id || params.args?.data?.id;
+
+          const rooms: string[] = [];
+
+          if (modelName === 'tournament') {
+            if (entityId) rooms.push(`tournament_${entityId}`);
+          } else if (modelName === 'team') {
+            if (entityId) rooms.push(`team_${entityId}`);
+          } else if (modelName === 'match') {
+            if (entityId) rooms.push(`match_${entityId}`);
+            const tId = result?.tournament_id || result?.tournamentId;
+            if (tId) rooms.push(`tournament_${tId}`);
+          } else if (modelName === 'user') {
+            if (entityId) rooms.push(`user_${entityId}`);
+          } else if (modelName === 'squad') {
+            const uId = result?.user_id || result?.userId || result?.leader_id;
+            if (uId) rooms.push(`user_${uId}`);
+            const tId = result?.team_id || result?.teamId;
+            if (tId) rooms.push(`team_${tId}`);
+          } else if (modelName === 'registration' || modelName === 'tournamentregistration') {
+            const tId = result?.tournament_id || result?.tournamentId;
+            if (tId) rooms.push(`tournament_${tId}`);
+            const teamId = result?.team_id || result?.teamId;
+            if (teamId) rooms.push(`team_${teamId}`);
+            const uId = result?.user_id || result?.userId;
+            if (uId) rooms.push(`user_${uId}`);
+          } else if (modelName === 'notification') {
+            const uId = result?.user_id || result?.userId;
+            if (uId) rooms.push(`user_${uId}`);
+          }
+
+          if (rooms.length > 0) {
+            this.eventEmitter.emit('DATA_UPDATED', {
+              rooms,
+              entity: modelName,
+              action: upperAction,
+              entityId,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        } catch {
+          // Ignore event emission errors so DB operation succeeds unaffected
+        }
+      }
+
+      return result;
+    });
   }
 
   get isConnected(): boolean {
