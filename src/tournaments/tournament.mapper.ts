@@ -171,7 +171,7 @@ export const toTournamentResponse = (
 
   const stream = (t as any).streamUrl ?? null;
   const viewers = (t as any).viewersCount ?? 0;
-  const orgName = (t as any).organizerName || 'BlastX Esports';
+  const orgName = (t as any).organizerName || 'BlastiX Arena';
   const orgVerified = (t as any).organizerVerified ?? true;
   const accentColor = (t as any).accentColorHex ?? null;
   const perKill = (t as any).perKillReward ?? 0;

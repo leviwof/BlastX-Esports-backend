@@ -94,7 +94,7 @@ export class FreeFireLiveController {
     const base = {
       id: t.id, title: t.title, game: t.game?.name ?? 'Free Fire', banner_url: t.bannerUrl,
       prize_pool: t.prizePool, currency: '\u20B9', viewersCount: t.viewersCount,
-      status: t.status, starts_at: t.startsAt, organizer: t.organizerName ?? 'BlastX Esports',
+      status: t.status, starts_at: t.startsAt, organizer: t.organizerName ?? 'BlastiX Arena',
       organizerVerified: t.organizerVerified, accentColorHex: t.accentColorHex,
       team_mode: t.teamMode, map: t.map, format: t.format, entry_fee: t.entryFee,
       max_slots: t.maxSlots, filledSlots: t.registeredCount, registered_count: t.registeredCount,

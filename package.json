@@ -1,7 +1,7 @@
 {
   "name": "blastix-esports-backend",
   "version": "0.0.1",
-  "description": "Backend API for BlastiX Esports",
+  "description": "Backend API for BlastiX Arena",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {

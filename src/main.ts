@@ -59,7 +59,7 @@ async function bootstrap(): Promise<void> {
   const port = Number(process.env.PORT) || 3000;
   await app.listen(port, '0.0.0.0');
   logger.log(
-    `BlastiX Esports API listening on 0.0.0.0:${port} (PORT env=${process.env.PORT ?? 'unset'}, NODE_ENV=${process.env.NODE_ENV ?? 'development'})`,
+    `BlastiX Arena API listening on 0.0.0.0:${port} (PORT env=${process.env.PORT ?? 'unset'}, NODE_ENV=${process.env.NODE_ENV ?? 'development'})`,
   );
 
   // Connectivity is reported, never fatal: an unreachable database must not stop the

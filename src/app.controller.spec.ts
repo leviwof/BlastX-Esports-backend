@@ -1,3 +1,7 @@
+jest.mock('@nestjs/event-emitter', () => ({
+  OnEvent: () => () => undefined,
+}));
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -22,7 +26,7 @@ describe('AppController', () => {
   });
 
   it('returns the BlastiX greeting', () => {
-    expect(appController.getHello()).toBe('Hello BlastiX Esports!');
+    expect(appController.getHello()).toBe('Hello BlastiX Arena!');
   });
 
   it('reports dependency status from /health', async () => {
