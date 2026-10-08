@@ -102,27 +102,41 @@ export class SquadsService {
 
       if (!squad) {
         const squadOwnerRole = team.ownerRole ?? OwnerRole.LEADER;
-        squad = await this.prisma.squad.create({
-          data: {
-            gameId: team.gameId,
-            name: team.name,
-            tag: team.tag,
-            logoUrl: team.logoUrl,
-            leaderId: team.captainId,
-            ownerRole: squadOwnerRole,
-            maxMainPlayers: 4,
-            maxSubstitutes: 2,
-          },
-        });
+        try {
+          squad = await this.prisma.squad.create({
+            data: {
+              gameId: team.gameId,
+              name: team.name,
+              tag: team.tag,
+              logoUrl: team.logoUrl,
+              leaderId: team.captainId,
+              ownerRole: squadOwnerRole,
+              maxMainPlayers: 4,
+              maxSubstitutes: 2,
+            },
+          });
+        } catch {
+          // If created concurrently or unique constraint failed, fetch existing squad
+          squad = await this.prisma.squad.findFirst({
+            where: {
+              gameId: team.gameId,
+              leaderId: team.captainId,
+            },
+          });
+        }
       }
 
-      squadId = squad.id;
+      if (squad) {
+        squadId = squad.id;
 
-      await this.prisma.team.update({
-        where: { id: team.id },
-        data: { persistentSquadId: squadId },
-      });
+        await this.prisma.team.update({
+          where: { id: team.id },
+          data: { persistentSquadId: squadId },
+        });
+      }
     }
+
+    if (!squadId) return;
 
     const squad = await this.prisma.squad.findUnique({
       where: { id: squadId },
