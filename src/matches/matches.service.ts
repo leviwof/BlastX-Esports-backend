@@ -9,7 +9,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Match, MatchResult, TournamentFormat, TournamentStatus, MatchStatus, RegistrationStatus } from '@prisma/client';
 import { CreateMatchDto } from './dto/create-match.dto';
 import { BulkRecordResultsDto } from './dto/record-results.dto';
-import { LeaderboardEntry, LeaderboardResponse } from './match.mapper';
+import { LeaderboardEntry, LeaderboardResponse, toMatchResponse, MatchResponse } from './match.mapper';
 import { validateStatusTransition } from '../tournaments/tournament-state-machine';
 
 const BR_PLACEMENT_POINTS: Record<number, number> = {
@@ -382,6 +382,7 @@ export class MatchesService {
     return this.prisma.match.findMany({
       where: { tournamentId },
       include: {
+        tournament: { select: { roomId: true, roomPassword: true, roomReleasedAt: true } },
         results: {
           include: {
             registration: {
@@ -392,5 +393,65 @@ export class MatchesService {
       },
       orderBy: { matchNumber: 'asc' },
     });
+  }
+
+  async getGroupedMatchesForTournament(tournamentId: string) {
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      include: {
+        matches: {
+          include: {
+            tournament: { select: { roomId: true, roomPassword: true, roomReleasedAt: true } },
+            results: {
+              include: {
+                registration: {
+                  include: { user: true, team: true },
+                },
+              },
+            },
+          },
+          orderBy: { matchNumber: 'asc' },
+        },
+      },
+    });
+
+    if (!tournament) {
+      throw new NotFoundException('Tournament not found');
+    }
+
+    const rawMatches = tournament.matches;
+    const mappedMatches: MatchResponse[] = rawMatches.map((m: any) => toMatchResponse(m));
+
+    const groupsMap = new Map<string, any>();
+
+    for (const m of mappedMatches) {
+      const gName = m.group_name || m.group || 'Group A';
+      if (!groupsMap.has(gName)) {
+        groupsMap.set(gName, {
+          group_name: gName,
+          group: gName,
+          room_id: m.room_id,
+          room_password: m.room_password,
+          password: m.password,
+          is_room_released: m.is_room_released,
+          matches: [],
+        });
+      }
+      const grp = groupsMap.get(gName);
+      grp.matches.push(m);
+      if (m.room_id) {
+        grp.room_id = m.room_id;
+        grp.room_password = m.room_password;
+        grp.password = m.password;
+        grp.is_room_released = m.is_room_released;
+      }
+    }
+
+    const groups = Array.from(groupsMap.values());
+
+    return {
+      matches: mappedMatches,
+      groups,
+    };
   }
 }

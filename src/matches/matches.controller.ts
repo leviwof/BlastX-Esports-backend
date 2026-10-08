@@ -11,11 +11,12 @@ export class MatchesController {
   @Public()
   @Get(':id/matches')
   async getMatches(@Param('id') tournamentId: string, @Res() res: Response) {
-    const matches = await this.matchesService.getMatchesForTournament(tournamentId);
+    const result = await this.matchesService.getGroupedMatchesForTournament(tournamentId);
     res.setHeader('Cache-Control', 'public, max-age=10, stale-while-revalidate=5');
     res.json({
       status: 'success',
-      data: matches.map(toMatchResponse),
+      data: result.matches,
+      groups: result.groups,
     });
   }
 }

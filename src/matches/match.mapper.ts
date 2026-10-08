@@ -17,6 +17,8 @@ export interface MatchResponse {
   id: string;
   tournament_id: string;
   round: string;
+  group_name: string | null;
+  group: string | null;
   match_number: number;
   map: string;
   status: string; // 'upcoming' | 'live' | 'completed'
@@ -26,6 +28,10 @@ export interface MatchResponse {
   winner_team_name: string | null;
   top_killer_name: string | null;
   stream_url: string | null;
+  room_id: string | null;
+  room_password: string | null;
+  password: string | null;
+  is_room_released: boolean;
   created_at: Date;
   results?: MatchResultResponse[];
 }
@@ -74,10 +80,15 @@ export const toMatchResultResponse = (
 export const toMatchResponse = (
   m: Match & {
     round?: string;
+    groupName?: string | null;
+    roomId?: string | null;
+    roomPassword?: string | null;
+    roomReleasedAt?: Date | null;
     endedAt?: Date | null;
     streamUrl?: string | null;
     winnerTeamName?: string | null;
     topKillerName?: string | null;
+    tournament?: { roomId?: string | null; roomPassword?: string | null; roomReleasedAt?: Date | null };
     results?: (MatchResult & { registration?: TournamentRegistration & { user?: User; team?: Team | null } })[];
   },
 ): MatchResponse => {
@@ -105,10 +116,19 @@ export const toMatchResponse = (
     }
   }
 
+  const groupName = m.groupName || (m as any).group || null;
+  const roomId = m.roomId || m.tournament?.roomId || null;
+  const roomPassword = m.roomPassword || m.tournament?.roomPassword || null;
+  const roomReleasedAt = m.roomReleasedAt || m.tournament?.roomReleasedAt;
+  const now = new Date();
+  const isRoomReleased = roomReleasedAt ? new Date(roomReleasedAt) <= now : true;
+
   return {
     id: m.id,
     tournament_id: m.tournamentId,
     round: (m as any).round || `Round ${m.matchNumber}`,
+    group_name: groupName,
+    group: groupName,
     match_number: m.matchNumber,
     map: m.map,
     status: statusStr,
@@ -118,6 +138,10 @@ export const toMatchResponse = (
     winner_team_name: winnerTeamName,
     top_killer_name: topKillerName,
     stream_url: (m as any).streamUrl ?? null,
+    room_id: isRoomReleased ? roomId : null,
+    room_password: isRoomReleased ? roomPassword : null,
+    password: isRoomReleased ? roomPassword : null,
+    is_room_released: isRoomReleased,
     created_at: m.createdAt,
     ...(m.results ? { results: m.results.map(toMatchResultResponse) } : {}),
   };
