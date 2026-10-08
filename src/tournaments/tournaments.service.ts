@@ -39,6 +39,7 @@ import { PaginatedResult, createPaginatedResponse } from '../common/pagination.d
 import { toTeamResponse } from '../teams/team.mapper';
 import { TournamentBracketResponse, TournamentStage, StageTeam } from './tournament.mapper';
 import { randomBytes } from 'crypto';
+import { SquadsService } from '../squads/squads.service';
 
 @Injectable()
 export class TournamentsService implements OnModuleInit {
@@ -46,6 +47,7 @@ export class TournamentsService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
     private readonly config: ConfigService,
+    private readonly squadsService?: SquadsService,
   ) {}
 
   async onModuleInit() {
@@ -1373,6 +1375,10 @@ export class TournamentsService implements OnModuleInit {
         },
       },
     });
+
+    if (this.squadsService) {
+      await this.squadsService.syncTeamToSquad(team.id);
+    }
 
     return {
       ...toTeamResponse(team as any),

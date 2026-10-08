@@ -6,9 +6,10 @@ import { FreeFireLiveController } from './free-fire-live.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { MatchesModule } from '../matches/matches.module';
 import { TeamsModule } from '../teams/teams.module';
+import { SquadsModule } from '../squads/squads.module';
 
 @Module({
-  imports: [PrismaModule, MatchesModule, TeamsModule],
+  imports: [PrismaModule, MatchesModule, TeamsModule, SquadsModule],
   controllers: [TournamentsController, AdminTournamentsController, FreeFireLiveController],
   providers: [TournamentsService],
   exports: [TournamentsService],

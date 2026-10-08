@@ -49,10 +49,29 @@ export class SquadsService {
   ) {}
 
   async getMySquad(userId: string) {
-    const membership = await this.prisma.squadMember.findUnique({
+    let membership = await this.prisma.squadMember.findUnique({
       where: { userId },
       select: { squadId: true },
     });
+
+    if (!membership && this.prisma.teamMember?.findFirst) {
+      const teamMember = await this.prisma.teamMember.findFirst({
+        where: { userId },
+        include: {
+          team: true,
+        },
+        orderBy: { joinedAt: 'desc' },
+      });
+
+      if (teamMember?.teamId) {
+        await this.syncTeamToSquad(teamMember.teamId);
+        membership = await this.prisma.squadMember.findUnique({
+          where: { userId },
+          select: { squadId: true },
+        });
+      }
+    }
+
     if (!membership) return { status: 'success', squad: null };
 
     const squad = await this.prisma.squad.findUnique({
@@ -60,6 +79,90 @@ export class SquadsService {
       include: squadInclude,
     });
     return { status: 'success', squad: squad ? this.toSquadResponse(squad) : null };
+  }
+
+  async syncTeamToSquad(teamId: string): Promise<void> {
+    if (!this.prisma.team?.findUnique) return;
+
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      include: { members: true },
+    });
+    if (!team) return;
+
+    let squadId = team.persistentSquadId;
+
+    if (!squadId) {
+      let squad = await this.prisma.squad.findFirst({
+        where: {
+          gameId: team.gameId,
+          leaderId: team.captainId,
+        },
+      });
+
+      if (!squad) {
+        const squadOwnerRole = team.ownerRole ?? OwnerRole.LEADER;
+        squad = await this.prisma.squad.create({
+          data: {
+            gameId: team.gameId,
+            name: team.name,
+            tag: team.tag,
+            logoUrl: team.logoUrl,
+            leaderId: team.captainId,
+            ownerRole: squadOwnerRole,
+            maxMainPlayers: 4,
+            maxSubstitutes: 2,
+          },
+        });
+      }
+
+      squadId = squad.id;
+
+      await this.prisma.team.update({
+        where: { id: team.id },
+        data: { persistentSquadId: squadId },
+      });
+    }
+
+    const squad = await this.prisma.squad.findUnique({
+      where: { id: squadId },
+      include: { members: true },
+    });
+
+    if (!squad) return;
+
+    for (const member of team.members) {
+      const existingSquadMember = await this.prisma.squadMember.findUnique({
+        where: { userId: member.userId },
+      });
+
+      if (!existingSquadMember) {
+        const role =
+          member.userId === team.captainId
+            ? (team.ownerRole === OwnerRole.MANAGER ? SquadRole.MANAGER : SquadRole.LEADER)
+            : member.role === TeamMemberRole.MANAGER
+            ? SquadRole.MANAGER
+            : SquadRole.MEMBER;
+
+        const rosterType =
+          member.role === TeamMemberRole.SUBSTITUTE
+            ? SquadRosterType.SUBSTITUTE
+            : SquadRosterType.MAIN;
+
+        try {
+          await this.prisma.squadMember.create({
+            data: {
+              squadId,
+              userId: member.userId,
+              role,
+              rosterType,
+            },
+          });
+        } catch {
+          // Ignore unique constraint error if already inserted concurrently
+        }
+      }
+    }
   }
 
   async createSquad(userId: string, dto: CreateSquadDto) {

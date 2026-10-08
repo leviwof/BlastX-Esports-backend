@@ -13,6 +13,7 @@ import {
 import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
 import { Prisma, TeamMemberRole, TeamMode, Team, TeamMember, User, GameProfile, RegistrationStatus, OwnerRole } from '@prisma/client';
 import { randomBytes } from 'crypto';
+import { SquadsService } from '../squads/squads.service';
 
 
 export type TeamWithMembers = Team & {
@@ -21,7 +22,10 @@ export type TeamWithMembers = Team & {
 
 @Injectable()
 export class TeamsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly squadsService?: SquadsService,
+  ) {}
 
   private generateInviteCode(): string {
     return randomBytes(4).toString('hex').toUpperCase();
@@ -125,6 +129,10 @@ export class TeamsService {
         },
       },
     });
+
+    if (this.squadsService) {
+      await this.squadsService.syncTeamToSquad(team.id);
+    }
 
     return team as TeamWithMembers;
   }
@@ -384,6 +392,10 @@ export class TeamsService {
           }
         }
       }
+    }
+
+    if (this.squadsService) {
+      await this.squadsService.syncTeamToSquad(team.id);
     }
 
     return this.getTeamById(team.id);
