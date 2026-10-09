@@ -212,7 +212,7 @@ export class TournamentsService implements OnModuleInit {
         bannerUrl: dto.banner_url,
         format: dto.format,
         teamMode: dto.team_mode,
-        map: dto.map,
+        map: dto.map?.trim() || 'All Maps',
         maxSlots: dto.max_slots,
         entryFee: dto.entry_fee || 0,
         prizePool: dto.prize_pool || 0,
@@ -247,7 +247,7 @@ export class TournamentsService implements OnModuleInit {
     if (dto.banner_url !== undefined) data.bannerUrl = dto.banner_url;
     if (dto.format) data.format = dto.format;
     if (dto.team_mode) data.teamMode = dto.team_mode;
-    if (dto.map) data.map = dto.map;
+    if (dto.map !== undefined) data.map = dto.map.trim() || 'All Maps';
     if (dto.max_slots !== undefined) data.maxSlots = dto.max_slots;
     if (dto.entry_fee !== undefined) data.entryFee = dto.entry_fee;
     if (dto.prize_pool !== undefined) data.prizePool = dto.prize_pool;

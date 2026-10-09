@@ -32,9 +32,9 @@ export class CreateTournamentDto {
   @IsEnum(TeamMode)
   team_mode!: TeamMode;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  map!: string;
+  map?: string;
 
   @IsNotEmpty()
   @Type(() => Number)
