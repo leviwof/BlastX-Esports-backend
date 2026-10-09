@@ -8,6 +8,7 @@ import { ListUsersQuery } from './dto/list-users.query';
 import { AdminUpdateUserDto } from './dto/admin-update-user.dto';
 import { AdminUserResponse } from './user.mapper';
 import { PaginatedResult } from '../common/pagination.dto';
+import { GlobalLeaderboardQuery } from './dto/global-leaderboard.query';
 
 @Controller('admin/users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -21,7 +22,7 @@ export class AdminUsersController {
   }
 
   @Get('leaderboard')
-  async getLeaderboard(@Query() query: import('./dto/global-leaderboard.query').GlobalLeaderboardQuery) {
+  async getLeaderboard(@Query() query: GlobalLeaderboardQuery) {
     return this.usersService.getGlobalLeaderboard(query);
   }
 
