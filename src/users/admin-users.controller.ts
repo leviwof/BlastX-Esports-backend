@@ -20,6 +20,11 @@ export class AdminUsersController {
     return this.usersService.listUsers(query);
   }
 
+  @Get('leaderboard')
+  async getLeaderboard(@Query() query: import('./dto/global-leaderboard.query').GlobalLeaderboardQuery) {
+    return this.usersService.getGlobalLeaderboard(query);
+  }
+
   @Get(':id')
   async getUser(@Param('id') id: string): Promise<AdminUserResponse> {
     return this.usersService.getUserById(id);

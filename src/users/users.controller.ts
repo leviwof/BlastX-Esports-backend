@@ -1,15 +1,23 @@
 import { Controller, Get, Patch, Put, Post, Body, Query, Param, UseGuards, NotFoundException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
+import { Public } from '../common/public.decorator';
 import { CurrentUser, JwtUser } from '../common/current-user.decorator';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpsertGameProfileDto } from './dto/upsert-game-profile.dto';
 import { toGameProfileResponse, UserResponse, GameProfileResponse } from './user.mapper';
+import { GlobalLeaderboardQuery } from './dto/global-leaderboard.query';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  @Public()
+  @Get('leaderboard')
+  async getGlobalLeaderboard(@Query() query: GlobalLeaderboardQuery) {
+    return this.usersService.getGlobalLeaderboard(query);
+  }
 
   @Get('me')
   async getProfile(@CurrentUser() user: JwtUser): Promise<UserResponse> {

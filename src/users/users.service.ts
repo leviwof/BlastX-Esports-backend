@@ -325,4 +325,136 @@ export class UsersService {
       isMaxRank: rankCalc.isMaxRank,
     };
   }
+
+  async getGlobalLeaderboard(query: import('./dto/global-leaderboard.query').GlobalLeaderboardQuery) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
+    const skip = (page - 1) * limit;
+    const searchTerm = query.q?.trim() || '';
+    const sortBy = query.sortBy || 'points';
+
+    const where: Prisma.UserWhereInput = {
+      isActive: true,
+      ...(searchTerm
+        ? {
+            OR: [
+              { name: { contains: searchTerm, mode: 'insensitive' } },
+              { email: { contains: searchTerm, mode: 'insensitive' } },
+              {
+                gameProfiles: {
+                  some: {
+                    OR: [
+                      { inGameName: { contains: searchTerm, mode: 'insensitive' } },
+                      { inGameUid: { contains: searchTerm, mode: 'insensitive' } },
+                    ],
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const users = await this.prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        profilePic: true,
+        xp: true,
+        rank: true,
+        createdAt: true,
+        gameProfiles: {
+          select: {
+            inGameUid: true,
+            inGameName: true,
+          },
+        },
+        tournamentRegistrations: {
+          where: { status: RegistrationStatus.CONFIRMED },
+          select: {
+            id: true,
+            finalRank: true,
+            matchResults: {
+              select: {
+                kills: true,
+                totalPoints: true,
+                placement: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const playerStats = users.map((u) => {
+      const ff = u.gameProfiles[0] || null;
+      let totalKills = 0;
+      let matchPoints = 0;
+      let tournamentsWon = 0;
+      const tournamentsPlayed = u.tournamentRegistrations.length;
+
+      for (const reg of u.tournamentRegistrations) {
+        if (reg.finalRank === 1) tournamentsWon++;
+        for (const mr of reg.matchResults) {
+          totalKills += mr.kills;
+          matchPoints += mr.totalPoints;
+        }
+      }
+
+      const totalPoints = matchPoints > 0 ? matchPoints : Math.max(0, u.xp || 0);
+      const winRate =
+        tournamentsPlayed > 0
+          ? ((tournamentsWon / tournamentsPlayed) * 100).toFixed(1) + '%'
+          : '0.0%';
+
+      return {
+        userId: u.id,
+        userName: u.name,
+        email: u.email,
+        profilePic: u.profilePic,
+        inGameUid: ff?.inGameUid || null,
+        inGameName: ff?.inGameName || null,
+        xp: u.xp || 0,
+        playerRank: u.rank || 1,
+        totalKills,
+        totalPoints,
+        tournamentsPlayed,
+        tournamentsWon,
+        winRate,
+      };
+    });
+
+    playerStats.sort((a, b) => {
+      if (sortBy === 'kills') {
+        if (b.totalKills !== a.totalKills) return b.totalKills - a.totalKills;
+        return b.totalPoints - a.totalPoints;
+      } else if (sortBy === 'xp') {
+        if (b.xp !== a.xp) return b.xp - a.xp;
+        return b.totalPoints - a.totalPoints;
+      } else if (sortBy === 'tournamentsWon') {
+        if (b.tournamentsWon !== a.tournamentsWon) return b.tournamentsWon - a.tournamentsWon;
+        return b.totalPoints - a.totalPoints;
+      } else {
+        if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+        if (b.totalKills !== a.totalKills) return b.totalKills - a.totalKills;
+        return b.xp - a.xp;
+      }
+    });
+
+    const total = playerStats.length;
+    const items = playerStats.slice(skip, skip + limit).map((p, idx) => ({
+      ...p,
+      rank: skip + idx + 1,
+    }));
+
+    return {
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 1,
+    };
+  }
 }
