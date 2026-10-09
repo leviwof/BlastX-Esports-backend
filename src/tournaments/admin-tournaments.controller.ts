@@ -248,5 +248,22 @@ export class AdminTournamentsController {
   ) {
     return this.bracketService.updateGroupRoomCredentials(id, groupId, dto, user.sub);
   }
+
+  @Get(':id/rounds')
+  async getTournamentRounds(
+    @Param('id') id: string,
+  ) {
+    return this.bracketService.getTournamentRounds(id);
+  }
+
+  @Post(':id/groups/:groupId/scores')
+  async submitGroupScores(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('groupId') groupId: string,
+    @Body() dto: { scores: Array<{ tournamentTeamId: string; kills: number; placement: number }> },
+  ) {
+    return this.bracketService.submitGroupScores(id, groupId, dto.scores || [], user.sub);
+  }
 }
 

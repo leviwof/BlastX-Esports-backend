@@ -1666,4 +1666,110 @@ export class TournamentBracketService {
       credentialsReleasedAt: group.credentialsReleasedAt,
     };
   }
+
+  async getTournamentRounds(tournamentId: string) {
+    return this.prisma.tournamentRound.findMany({
+      where: { tournamentId },
+      orderBy: { roundNumber: 'asc' },
+      include: {
+        groups: {
+          orderBy: { groupNumber: 'asc' },
+          include: {
+            groupTeams: {
+              include: {
+                tournamentTeam: {
+                  include: {
+                    captain: true,
+                  },
+                },
+              },
+              orderBy: [
+                { totalPoints: 'desc' },
+                { kills: 'desc' },
+                { placementPoints: 'desc' },
+              ],
+            },
+          },
+        },
+        qualifications: {
+          include: {
+            tournamentTeam: true,
+          },
+        },
+        tieBreakers: true,
+      },
+    });
+  }
+
+  async submitGroupScores(
+    tournamentId: string,
+    groupId: string,
+    scores: Array<{ tournamentTeamId: string; kills: number; placement: number }>,
+    adminUserId: string,
+  ) {
+    const group = await this.prisma.tournamentGroup.findUnique({
+      where: { id: groupId },
+      include: { round: true },
+    });
+
+    if (!group || group.round.tournamentId !== tournamentId) {
+      throw new NotFoundException(`Group ${groupId} not found in tournament ${tournamentId}`);
+    }
+
+    const placementPointsTable: Record<number, number> = {
+      1: 12,
+      2: 9,
+      3: 8,
+      4: 7,
+      5: 6,
+      6: 5,
+      7: 4,
+      8: 3,
+      9: 2,
+      10: 1,
+      11: 0,
+      12: 0,
+    };
+
+    return this.prisma.$transaction(async (tx) => {
+      for (const entry of scores) {
+        const placementPts = placementPointsTable[entry.placement] ?? 0;
+        const killPts = entry.kills;
+        const totalPts = placementPts + killPts;
+
+        await tx.tournamentGroupTeam.update({
+          where: {
+            groupId_tournamentTeamId: {
+              groupId,
+              tournamentTeamId: entry.tournamentTeamId,
+            },
+          },
+          data: {
+            rank: entry.placement,
+            kills: entry.kills,
+            placementPoints: placementPts,
+            totalPoints: totalPts,
+          },
+        });
+      }
+
+      await this.logAudit(
+        tx,
+        tournamentId,
+        'SUBMIT_GROUP_SCORES',
+        { groupId, groupName: group.name, teamCount: scores.length },
+        adminUserId,
+      );
+
+      return tx.tournamentGroup.findUnique({
+        where: { id: groupId },
+        include: {
+          groupTeams: {
+            include: { tournamentTeam: true },
+            orderBy: [{ totalPoints: 'desc' }, { kills: 'desc' }],
+          },
+        },
+      });
+    });
+  }
 }
