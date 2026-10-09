@@ -186,6 +186,9 @@ model Team {
   members               TeamMember[]
   registrations         TournamentRegistration[]
   tournamentInvitations TournamentInvitation[]
+  groupTeams            TournamentGroupTeam[]
+  qualifications        RoundQualification[]
+  wildCardSlots         WildCardSlot[]
 
   @@unique([gameId, tournamentId, name], name: "unique_game_tournament_team_name")
   @@unique([tournamentId, persistentSquadId], name: "unique_tournament_persistent_squad")
@@ -255,6 +258,9 @@ model Tournament {
   matches               Match[]
   tournamentInvitations TournamentInvitation[]
   tournamentWaitlists   TournamentWaitlist[]
+  rounds                TournamentRound[]
+  wildCardWindow        WildCardWindow?
+  auditLogs             TournamentAuditLog[]
 
   @@index([gameId, status, startsAt])
   @@index([section, status, startsAt])
@@ -379,15 +385,18 @@ model Match {
   roomId         String?     @map("room_id")
   roomPassword   String?     @map("room_password")
   roomReleasedAt DateTime?   @map("room_released_at")
+  groupId        String?     @map("group_id")
   winnerTeamName String?     @map("winner_team_name")
   topKillerName  String?     @map("top_killer_name")
   createdAt      DateTime    @default(now()) @map("created_at")
 
-  tournament Tournament    @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  tournament Tournament       @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  group      TournamentGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
   results    MatchResult[]
 
   @@unique([tournamentId, matchNumber], name: "unique_tournament_match_number")
   @@index([tournamentId])
+  @@index([groupId])
   @@index([status, scheduledAt, reminderSentAt], map: "matches_scheduled_reminder_idx")
   @@map("matches")
 }
@@ -641,4 +650,159 @@ model SupportTicket {
   @@index([userId])
   @@index([submittedAt])
   @@map("support_tickets")
+}
+
+enum TournamentRoundType {
+  ROUND_1
+  ROUND_2
+  ROUND_3
+  GRAND_FINAL
+}
+
+enum RoundStatus {
+  SCHEDULED
+  LIVE
+  TIE_BREAKER_PENDING
+  COMPLETED
+}
+
+enum QualificationDestination {
+  ROUND_2
+  ROUND_3
+  GRAND_FINAL
+  ELIMINATED
+}
+
+enum WildCardStatus {
+  CLOSED
+  OPEN
+  LOCKED
+}
+
+model TournamentRound {
+  id              String               @id @default(cuid())
+  tournamentId    String               @map("tournament_id")
+  roundType       TournamentRoundType  @map("round_type")
+  roundNumber     Int                  @map("round_number")
+  status          RoundStatus          @default(SCHEDULED)
+  startedAt       DateTime?            @map("started_at")
+  completedAt     DateTime?            @map("completed_at")
+
+  tournament      Tournament           @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  groups          TournamentGroup[]
+  qualifications  RoundQualification[]
+  tieBreakers     TournamentTieBreaker[]
+
+  @@unique([tournamentId, roundType])
+  @@map("tournament_rounds")
+}
+
+model TournamentGroup {
+  id                     String               @id @default(cuid())
+  roundId                String               @map("round_id")
+  groupNumber            Int                  @map("group_number")
+  name                   String               // e.g. "Group 1" or "Group A"
+  roomId                 String?              @map("room_id")
+  roomPassword           String?              @map("room_password")
+  credentialsReleasedAt DateTime?            @map("credentials_released_at")
+
+  round                  TournamentRound      @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  groupTeams             TournamentGroupTeam[]
+  matches                Match[]
+
+  @@map("tournament_groups")
+}
+
+model TournamentGroupTeam {
+  id               String               @id @default(cuid())
+  groupId          String               @map("group_id")
+  tournamentTeamId String               @map("tournament_team_id")
+  seed             Int?
+  rank             Int?
+  kills            Int                  @default(0)
+  placementPoints  Int                  @default(0) @map("placement_points")
+  totalPoints      Int                  @default(0) @map("total_points")
+
+  group            TournamentGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  tournamentTeam   Team                 @relation(fields: [tournamentTeamId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, tournamentTeamId])
+  @@map("tournament_group_teams")
+}
+
+model RoundQualification {
+  id               String                   @id @default(cuid())
+  roundId          String                   @map("round_id")
+  tournamentTeamId String                   @map("tournament_team_id")
+  destination      QualificationDestination
+  isManualOverride Boolean                  @default(false) @map("is_manual_override")
+  reason           String?
+  promotedByUserId String?                  @map("promoted_by_user_id")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+
+  round            TournamentRound          @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  tournamentTeam   Team                     @relation(fields: [tournamentTeamId], references: [id], onDelete: Cascade)
+
+  @@map("round_qualifications")
+}
+
+model WildCardWindow {
+  id              String               @id @default(cuid())
+  tournamentId    String               @unique @map("tournament_id")
+  status          WildCardStatus       @default(CLOSED)
+  entryFee        Int                  @default(0) @map("entry_fee")
+  maxSlots        Int                  @default(8) @map("max_slots")
+  openedAt        DateTime?            @map("opened_at")
+  closedAt        DateTime?            @map("closed_at")
+
+  tournament      Tournament           @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  slots           WildCardSlot[]
+
+  @@map("wild_card_windows")
+}
+
+model WildCardSlot {
+  id                String               @id @default(cuid())
+  windowId          String               @map("window_id")
+  tournamentTeamId  String               @map("tournament_team_id")
+  slotNumber        Int                  @map("slot_number")
+  isManualAdminSlot Boolean              @default(false) @map("is_manual_admin_slot")
+  assignedByUserId  String?              @map("assigned_by_user_id")
+  assignedAt        DateTime             @default(now()) @map("assigned_at")
+
+  window            WildCardWindow       @relation(fields: [windowId], references: [id], onDelete: Cascade)
+  tournamentTeam    Team                 @relation(fields: [tournamentTeamId], references: [id], onDelete: Cascade)
+
+  @@unique([windowId, tournamentTeamId])
+  @@unique([windowId, slotNumber])
+  @@map("wild_card_slots")
+}
+
+model TournamentTieBreaker {
+  id                String             @id @default(cuid())
+  roundId           String             @map("round_id")
+  groupId           String             @map("group_id")
+  tiedTeamIds       String[]           @map("tied_team_ids")
+  recommendedTeamId String             @map("recommended_team_id")
+  selectedTeamId    String?            @map("selected_team_id")
+  isResolved        Boolean            @default(false) @map("is_resolved")
+  resolvedByUserId  String?            @map("resolved_by_user_id")
+  resolvedAt        DateTime?          @map("resolved_at")
+
+  round             TournamentRound    @relation(fields: [roundId], references: [id], onDelete: Cascade)
+
+  @@map("tournament_tie_breakers")
+}
+
+model TournamentAuditLog {
+  id             String                @id @default(cuid())
+  tournamentId   String                @map("tournament_id")
+  action         String
+  details        Json
+  adminUserId    String                @map("admin_user_id")
+  createdAt      DateTime              @default(now()) @map("created_at")
+
+  tournament     Tournament            @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  @@map("tournament_audit_logs")
 }

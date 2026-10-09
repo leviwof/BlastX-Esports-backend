@@ -36,6 +36,7 @@ import { LeaderboardEntry } from '../matches/match.mapper';
 import { TeamsService } from '../teams/teams.service';
 import { JoinTeamDto } from '../teams/dto/join-team.dto';
 import { toTeamResponse, TeamResponse } from '../teams/team.mapper';
+import { TournamentBracketService } from './tournament-bracket.service';
 
 @Controller(['tournaments', 'api/tournaments'])
 export class TournamentsController {
@@ -44,6 +45,7 @@ export class TournamentsController {
     private readonly matchesService: MatchesService,
     private readonly jwtService: JwtService,
     private readonly teamsService: TeamsService,
+    private readonly bracketService: TournamentBracketService,
   ) {}
 
   @Public()
@@ -277,5 +279,18 @@ export class TournamentsController {
   ): Promise<TeamResponse> {
     const team = await this.teamsService.joinTeam(user.sub, dto);
     return toTeamResponse(team);
+  }
+
+  /**
+   * Players retrieve credentials for their assigned match/group.
+   * Isolates credentials so players only see their own group, and only within 15 minutes of release.
+   */
+  @Get(':id/my-match')
+  @UseGuards(JwtAuthGuard)
+  async getMyMatchCredentials(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+  ) {
+    return this.bracketService.getPlayerMatchCredentials(id, user.sub);
   }
 }
