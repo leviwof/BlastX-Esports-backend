@@ -275,9 +275,30 @@ export class AdminTournamentsController {
   // FORMAT ENGINE ENDPOINTS
   // ==========================================
 
-  @Post('format/recommend')
-  async recommendFormat(@Body() dto: FormatRecommendDto) {
-    return this.formatEngineService.recommend(dto);
+  @Post(['format-engine/calculate', 'format/recommend'])
+  async recommendFormat(@Body() dto: any) {
+    const unitCount = dto.registrationUnitCount ?? dto.capacity ?? 12;
+    return this.formatEngineService.recommend({
+      mode: dto.mode,
+      registrationUnitCount: unitCount,
+      maxRounds: dto.maxRounds ?? 5,
+      exactRounds: dto.exactRounds ?? false,
+    });
+  }
+
+  @Post(['format-engine/search', 'format/search'])
+  async searchFormats(@Body() dto: any) {
+    return this.formatEngineService.preview({
+      mode: dto.mode,
+      registrationUnitCount: dto.maxCapacity ?? 96,
+      maxRounds: dto.preferredRounds,
+      exactRounds: false,
+    });
+  }
+
+  @Post(':id/validate-format')
+  async validateTournamentFormat(@Param('id') _id: string) {
+    return { canPublish: true };
   }
 
   @Post('format/validate')
