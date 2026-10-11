@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, IsEnum, IsInt, Min, IsUrl, IsDateString, IsObject } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsEnum, IsInt, Min, Max, IsBoolean, IsUrl, IsDateString, IsObject } from 'class-validator';
 import { TournamentFormat, TeamMode, TournamentSection } from '@prisma/client';
 import { Type } from 'class-transformer';
 
@@ -128,4 +128,25 @@ export class CreateTournamentDto {
 
   @IsOptional()
   announcements?: any;
+
+  @IsOptional()
+  @IsEnum(['SQUAD_BR', 'DUO_BR', 'SOLO_BR', 'CLASH_SQUAD'])
+  tournament_mode?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(2)
+  registration_unit_count?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(8)
+  max_rounds?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  exact_rounds?: boolean;
 }

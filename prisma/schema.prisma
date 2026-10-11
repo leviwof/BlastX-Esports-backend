@@ -264,6 +264,16 @@ model Tournament {
   wildCardWindow        WildCardWindow?
   auditLogs             TournamentAuditLog[]
 
+  // NEW fields for format engine
+  registrationUnitCount  Int?                  @map("registration_unit_count")
+  maxRounds              Int                   @default(5) @map("max_rounds")
+  exactRounds            Boolean               @default(false) @map("exact_rounds")
+  formatVersion          Int                   @default(1) @map("format_version")
+  lockedCapacity         Int?                  @map("locked_capacity")
+  formatConfig           Json?                 @map("format_config")
+  isFormatLocked         Boolean               @default(false) @map("is_format_locked")
+  formatPlan             TournamentFormatPlan?
+
   @@index([gameId, status, startsAt])
   @@index([section, status, startsAt])
   @@map("tournaments")
@@ -412,6 +422,8 @@ model MatchResult {
   placementPoints Int      @default(0) @map("placement_points")
   killPoints      Int      @default(0) @map("kill_points")
   totalPoints     Int      @default(0) @map("total_points")
+  verifiedBy          String?   @map("verified_by")
+  verificationStatus  String    @default("PENDING") @map("verification_status")
   createdAt       DateTime @default(now()) @map("created_at")
 
   match        Match                  @relation(fields: [matchId], references: [id], onDelete: Cascade)
@@ -658,7 +670,10 @@ enum TournamentRoundType {
   ROUND_1
   ROUND_2
   ROUND_3
+  ROUND_4
+  ROUND_5
   GRAND_FINAL
+  CLASH_ROUND   // for Clash Squad bracket rounds
 }
 
 enum RoundStatus {
@@ -671,6 +686,8 @@ enum RoundStatus {
 enum QualificationDestination {
   ROUND_2
   ROUND_3
+  ROUND_4
+  ROUND_5
   GRAND_FINAL
   ELIMINATED
 }
@@ -689,6 +706,13 @@ model TournamentRound {
   status          RoundStatus          @default(SCHEDULED)
   startedAt       DateTime?            @map("started_at")
   completedAt     DateTime?            @map("completed_at")
+
+  // NEW fields
+  lobbyUnits         Int?    @map("lobby_units")          // units in this stage (e.g. 96, 48)
+  groupCount         Int?    @map("group_count")          // number of groups
+  qualifiersPerGroup Int?    @map("qualifiers_per_group") // Q value for this stage
+  matchesPerGroup    Int     @default(1) @map("matches_per_group")
+  isFinal            Boolean @default(false) @map("is_final")
 
   tournament      Tournament           @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   groups          TournamentGroup[]
@@ -807,6 +831,20 @@ model TournamentAuditLog {
   tournament     Tournament            @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
 
   @@map("tournament_audit_logs")
+}
+
+model TournamentFormatPlan {
+  id             String   @id @default(cuid())
+  tournamentId   String   @unique @map("tournament_id")
+  mode           String
+  stages         Json     // Array of { roundNumber, lobbyUnits, groupCount, qualifiersPerGroup, isFinal }
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  @@map("tournament_format_plans")
 }
 
 model DeviceToken {

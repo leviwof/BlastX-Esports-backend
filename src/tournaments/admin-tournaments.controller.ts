@@ -1,6 +1,9 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { TournamentsService } from './tournaments.service';
 import { TournamentBracketService } from './tournament-bracket.service';
+import { FormatEngineService } from './format-engine.service';
+import { GenericBracketService } from './generic-bracket.service';
+import { FormatRecommendDto, FormatValidateDto, PublishTournamentDto } from './dto/format-engine.dto';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
@@ -28,6 +31,8 @@ export class AdminTournamentsController {
   constructor(
     private readonly tournamentsService: TournamentsService,
     private readonly bracketService: TournamentBracketService,
+    private readonly formatEngineService: FormatEngineService,
+    private readonly genericBracketService: GenericBracketService,
   ) {}
 
   /** Includes DRAFT/CANCELLED events, unlike the player-facing catalogue. */
@@ -264,6 +269,65 @@ export class AdminTournamentsController {
     @Body() dto: { scores: Array<{ tournamentTeamId: string; kills: number; placement: number }> },
   ) {
     return this.bracketService.submitGroupScores(id, groupId, dto.scores || [], user.sub);
+  }
+
+  // ==========================================
+  // FORMAT ENGINE ENDPOINTS
+  // ==========================================
+
+  @Post('format/recommend')
+  async recommendFormat(@Body() dto: FormatRecommendDto) {
+    return this.formatEngineService.recommend(dto);
+  }
+
+  @Post('format/validate')
+  async validateFormat(@Body() dto: FormatValidateDto) {
+    return this.formatEngineService.validate(dto);
+  }
+
+  @Post('format/preview')
+  async previewFormat(@Body() dto: FormatRecommendDto) {
+    return this.formatEngineService.preview(dto);
+  }
+
+  @Post(':id/format/save-plan')
+  async saveFormatPlan(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() body: { stages: any[] },
+  ) {
+    return this.formatEngineService.saveFormatPlan(id, body.stages, user.sub);
+  }
+
+  @Post(':id/publish')
+  async publishTournament(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() _dto: PublishTournamentDto,
+  ) {
+    return this.formatEngineService.publish(id, user.sub);
+  }
+
+  // ==========================================
+  // GENERIC ROUND GENERATION (for format-engine tournaments)
+  // ==========================================
+
+  @Post(':id/stages/:roundNumber/generate')
+  async generateStage(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('roundNumber') roundNumber: string,
+  ) {
+    return this.genericBracketService.generateStage(id, parseInt(roundNumber, 10), user.sub);
+  }
+
+  @Post(':id/rounds/:roundId/finalize')
+  async finalizeRound(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('roundId') roundId: string,
+  ) {
+    return this.genericBracketService.finalizeRound(id, roundId, user.sub);
   }
 }
 
