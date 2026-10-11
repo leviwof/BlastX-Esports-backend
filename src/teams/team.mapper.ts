@@ -30,6 +30,8 @@ export interface TeamResponse {
   captain_id: string;
   owner_role?: string;
   status?: string;
+  registration_state?: string;
+  roster_version?: number;
   invite_code: string;
   code?: string;
   tournament_id?: string | null;
@@ -71,6 +73,8 @@ export interface TeamDetailResponse {
   logo_url: string | null;
   game_slug: string;
   owner_role?: string;
+  registration_state?: string;
+  roster_version?: number;
   accepting_substitutes: boolean;
   captain: {
     id: string;
@@ -131,6 +135,8 @@ export const toTeamResponse = (
     captain_id: team.captainId,
     owner_role: team.ownerRole ?? 'LEADER',
     status,
+    registration_state: (team as any).registrationState ?? 'FORMING',
+    roster_version: (team as any).rosterVersion ?? 1,
     invite_code: team.inviteCode,
     code: team.inviteCode,
     tournament_id: team.tournamentId,
@@ -177,6 +183,8 @@ export const toTeamDetailResponse = (
   tag: team.tag,
   logo_url: team.logoUrl,
   game_slug: team.game.slug,
+  registration_state: (team as any).registrationState ?? 'FORMING',
+  roster_version: (team as any).rosterVersion ?? 1,
   accepting_substitutes: team.acceptingSubstitutes ?? true,
   captain: {
     id: team.captain.id,

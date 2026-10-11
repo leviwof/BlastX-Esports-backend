@@ -1089,46 +1089,7 @@ export class SquadsService {
         throw new BadRequestException('Invitation is no longer valid because you are not in this squad');
       }
 
-      let autoRegistered = false;
-      const teamMembers = await this.prisma.teamMember.findMany({
-        where: { teamId: invitation.teamId },
-      });
-      const mainCount = teamMembers.filter(
-        (m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER,
-      ).length;
-
-      if (mainCount === 4) {
-        const existingReg = await this.prisma.tournamentRegistration.findFirst({
-          where: {
-            tournamentId: invitation.tournamentId,
-            teamId: invitation.teamId,
-            status: RegistrationStatus.CONFIRMED,
-          },
-        });
-        if (!existingReg) {
-          const tourney = await this.prisma.tournament.findUnique({
-            where: { id: invitation.tournamentId },
-          });
-          if (tourney) {
-            await this.prisma.tournamentRegistration.create({
-              data: {
-                tournamentId: invitation.tournamentId,
-                userId: invitation.leaderId,
-                teamId: invitation.teamId,
-                status: RegistrationStatus.CONFIRMED,
-                slotNumber: tourney.registeredCount + 1,
-              },
-            });
-            await this.prisma.tournament.update({
-              where: { id: invitation.tournamentId },
-              data: { registeredCount: { increment: 1 } },
-            });
-            autoRegistered = true;
-          }
-        } else {
-          autoRegistered = true;
-        }
-      }
+      const autoRegistered = false;
 
       this.events.emit('squad.invitation.responded', {
         userId: invitation.leaderId,

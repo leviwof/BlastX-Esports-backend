@@ -13,7 +13,8 @@ jest.mock('@nestjs/config', () => ({
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { TeamsService } from './teams.service';
 import { TournamentsService } from '../tournaments/tournaments.service';
-import { TeamMemberRole, RegistrationStatus, TournamentStatus, TeamMode, SquadRole } from '@prisma/client';
+import { SquadsService } from '../squads/squads.service';
+import { TeamMemberRole, RegistrationStatus, TournamentStatus, TeamMode, SquadRole, TeamRegistrationState } from '@prisma/client';
 
 describe('Teams & Tournaments Features', () => {
   let teamsService: TeamsService;
@@ -43,8 +44,10 @@ describe('Teams & Tournaments Features', () => {
         findUnique: jest.fn(),
       },
       tournamentInvitation: {
+        findUnique: jest.fn(),
         findFirst: jest.fn().mockResolvedValue(null),
         findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn(),
       },
       teamMember: {
         findFirst: jest.fn(),
@@ -66,6 +69,7 @@ describe('Teams & Tournaments Features', () => {
         count: jest.fn(),
         aggregate: jest.fn().mockResolvedValue({ _max: { slotNumber: 1 } }),
         create: jest.fn(),
+        update: jest.fn(),
       },
       tournamentWaitlist: {
         findUnique: jest.fn(),
@@ -605,6 +609,237 @@ describe('Teams & Tournaments Features', () => {
           registered_at: new Date('2026-10-03T18:00:00.000Z'),
         },
       ]);
+    });
+  });
+
+  describe('Section 1 Tournament Registration Redesign', () => {
+    let squadsService: SquadsService;
+
+    beforeEach(() => {
+      squadsService = new SquadsService(mockPrisma, mockEventEmitter);
+    });
+
+    it('1. register happy path sets state CONFIRMED and returns the slot number and emits slot_confirmed', async () => {
+      mockPrisma.tournament.findUnique
+        .mockResolvedValueOnce({
+          id: 'tour-1',
+          title: 'BlastX Championship',
+          gameId: 'game-1',
+          status: TournamentStatus.LIVE,
+          teamMode: TeamMode.SQUAD,
+          entryFee: 0,
+          maxSlots: 16,
+          registeredCount: 0,
+        })
+        .mockResolvedValueOnce({ registeredCount: 1 });
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-1',
+        name: 'Team Alpha',
+        gameId: 'game-1',
+        tournamentId: 'tour-1',
+        captainId: 'user-cap',
+        captain: { name: 'Captain' },
+        members: [
+          { userId: 'user-cap', role: TeamMemberRole.CAPTAIN },
+          { userId: 'user-p2', role: TeamMemberRole.PLAYER },
+          { userId: 'user-p3', role: TeamMemberRole.PLAYER },
+          { userId: 'user-p4', role: TeamMemberRole.PLAYER },
+        ],
+      });
+      mockPrisma.gameProfile.findMany.mockResolvedValue([
+        { userId: 'user-cap' },
+        { userId: 'user-p2' },
+        { userId: 'user-p3' },
+        { userId: 'user-p4' },
+      ]);
+      mockPrisma.tournamentRegistration.findMany.mockResolvedValue([]);
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.tournament.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.tournamentRegistration.create.mockResolvedValue({
+        id: 'reg-1',
+        tournamentId: 'tour-1',
+        userId: 'user-cap',
+        teamId: 'team-1',
+        status: RegistrationStatus.CONFIRMED,
+        slotNumber: 1,
+        createdAt: new Date(),
+      });
+      mockPrisma.team.update.mockResolvedValue({ id: 'team-1', registrationState: TeamRegistrationState.CONFIRMED });
+
+      const reg = await tournamentsService.registerUserOrTeam('user-cap', 'tour-1', { team_id: 'team-1' });
+
+      expect(reg.slotNumber).toBe(1);
+      expect(reg.status).toBe(RegistrationStatus.CONFIRMED);
+      expect(mockPrisma.team.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'team-1' },
+          data: expect.objectContaining({ registrationState: TeamRegistrationState.CONFIRMED }),
+        }),
+      );
+      expect(mockEventEmitter.emit).toHaveBeenCalledWith(
+        'tournament.slot_confirmed',
+        expect.objectContaining({
+          userIds: expect.arrayContaining(['user-cap', 'user-p2', 'user-p3', 'user-p4']),
+          tournamentTitle: 'BlastX Championship',
+          tournamentId: 'tour-1',
+          slotNumber: 1,
+        }),
+      );
+    });
+
+    it('2. calling register twice is idempotent and does not increment registeredCount', async () => {
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        title: 'BlastX Championship',
+        gameId: 'game-1',
+        status: TournamentStatus.LIVE,
+        teamMode: TeamMode.SQUAD,
+        entryFee: 0,
+        maxSlots: 16,
+        registeredCount: 5,
+      });
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-1',
+        name: 'Team Alpha',
+        gameId: 'game-1',
+        tournamentId: 'tour-1',
+        captainId: 'user-cap',
+        members: [
+          { userId: 'user-cap', role: TeamMemberRole.CAPTAIN },
+          { userId: 'user-p2', role: TeamMemberRole.PLAYER },
+          { userId: 'user-p3', role: TeamMemberRole.PLAYER },
+          { userId: 'user-p4', role: TeamMemberRole.PLAYER },
+        ],
+      });
+      mockPrisma.gameProfile.findMany.mockResolvedValue([
+        { userId: 'user-cap' },
+        { userId: 'user-p2' },
+        { userId: 'user-p3' },
+        { userId: 'user-p4' },
+      ]);
+      const existingReg = {
+        id: 'reg-existing',
+        tournamentId: 'tour-1',
+        userId: 'user-cap',
+        teamId: 'team-1',
+        status: RegistrationStatus.CONFIRMED,
+        slotNumber: 3,
+        createdAt: new Date(),
+      };
+      mockPrisma.tournamentRegistration.findMany.mockResolvedValue([existingReg]);
+
+      const result = await tournamentsService.registerUserOrTeam('user-cap', 'tour-1', { team_id: 'team-1' });
+
+      expect(result.id).toBe('reg-existing');
+      expect(result.slotNumber).toBe(3);
+      expect(result.status).toBe(RegistrationStatus.CONFIRMED);
+      expect(mockPrisma.tournament.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.tournamentRegistration.create).not.toHaveBeenCalled();
+    });
+
+    it('3. accepting the 4th invitation does NOT create a registration and does NOT change registeredCount', async () => {
+      mockPrisma.tournamentInvitation.findUnique.mockResolvedValue({
+        id: 'inv-4',
+        inviteeUserId: 'user-p4',
+        teamId: 'team-1',
+        tournamentId: 'tour-1',
+        squadId: 'squad-1',
+        status: 'PENDING',
+        leaderId: 'user-cap',
+        invitee: { name: 'Player 4', isActive: true },
+        tournament: { title: 'BlastX Championship', status: TournamentStatus.LIVE },
+      });
+      mockPrisma.squadMember.findUnique.mockResolvedValue({ userId: 'user-p4', squadId: 'squad-1' });
+      mockPrisma.tournamentRegistration.findFirst.mockResolvedValue(null);
+      mockPrisma.teamMember.findFirst.mockResolvedValue(null);
+      mockPrisma.teamMember.create.mockResolvedValue({ id: 'tm-4' });
+      mockPrisma.tournamentInvitation.update.mockResolvedValue({ id: 'inv-4', status: 'ACCEPTED' });
+
+      const response = await squadsService.respondToInvitation('user-p4', 'inv-4', 'ACCEPT');
+
+      expect(response.status).toBe('ACCEPTED');
+      expect(response.auto_registered).toBe(false);
+      expect(mockPrisma.tournamentRegistration.create).not.toHaveBeenCalled();
+      expect(mockPrisma.tournament.update).not.toHaveBeenCalled();
+      expect(mockEventEmitter.emit).toHaveBeenCalledWith(
+        'squad.invitation.responded',
+        expect.objectContaining({ action: 'ACCEPT' }),
+      );
+    });
+
+    it('4. unregister resets state to FORMING', async () => {
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        registrationClosesAt: new Date(Date.now() + 1000000),
+        entryFee: 0,
+      });
+      mockPrisma.teamMember.findMany.mockResolvedValue([{ teamId: 'team-1' }]);
+      mockPrisma.tournamentRegistration.findFirst.mockResolvedValue({
+        id: 'reg-1',
+        tournamentId: 'tour-1',
+        teamId: 'team-1',
+        status: RegistrationStatus.CONFIRMED,
+      });
+      mockPrisma.tournamentRegistration.update.mockResolvedValue({ id: 'reg-1', status: RegistrationStatus.CANCELLED });
+      mockPrisma.tournament.update.mockResolvedValue({ id: 'tour-1' });
+      mockPrisma.team.update.mockResolvedValue({ id: 'team-1', registrationState: TeamRegistrationState.FORMING });
+
+      const unreg = await tournamentsService.unregisterUserOrTeam('user-cap', 'tour-1');
+
+      expect(unreg.message).toBe('Successfully unregistered from tournament');
+      expect(mockPrisma.tournamentRegistration.update).toHaveBeenCalledWith({
+        where: { id: 'reg-1' },
+        data: { status: RegistrationStatus.CANCELLED },
+      });
+      expect(mockPrisma.tournament.update).toHaveBeenCalledWith({
+        where: { id: 'tour-1' },
+        data: { registeredCount: { decrement: 1 } },
+      });
+      expect(mockPrisma.team.update).toHaveBeenCalledWith({
+        where: { id: 'team-1' },
+        data: { registrationState: TeamRegistrationState.FORMING },
+      });
+    });
+
+    it('5. two simultaneous registrations for the last slot never exceed max_slots (atomic failure throws full)', async () => {
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        title: 'BlastX Championship',
+        gameId: 'game-1',
+        status: TournamentStatus.LIVE,
+        teamMode: TeamMode.SQUAD,
+        entryFee: 0,
+        maxSlots: 10,
+        registeredCount: 10,
+      });
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-2',
+        name: 'Team Beta',
+        gameId: 'game-1',
+        tournamentId: 'tour-1',
+        captainId: 'user-cap2',
+        members: [
+          { userId: 'user-cap2', role: TeamMemberRole.CAPTAIN },
+          { userId: 'user-b2', role: TeamMemberRole.PLAYER },
+          { userId: 'user-b3', role: TeamMemberRole.PLAYER },
+          { userId: 'user-b4', role: TeamMemberRole.PLAYER },
+        ],
+      });
+      mockPrisma.gameProfile.findMany.mockResolvedValue([
+        { userId: 'user-cap2' },
+        { userId: 'user-b2' },
+        { userId: 'user-b3' },
+        { userId: 'user-b4' },
+      ]);
+      mockPrisma.tournamentRegistration.findMany.mockResolvedValue([]);
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      // Atomic conditional update fails because capacity was taken
+      mockPrisma.tournament.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        tournamentsService.registerUserOrTeam('user-cap2', 'tour-1', { team_id: 'team-2' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrisma.tournamentRegistration.create).not.toHaveBeenCalled();
     });
   });
 });

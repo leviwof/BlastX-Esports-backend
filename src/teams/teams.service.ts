@@ -11,7 +11,7 @@ import {
   toTeamDetailResponse,
 } from './team.mapper';
 import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
-import { Prisma, TeamMemberRole, TeamMode, Team, TeamMember, User, GameProfile, RegistrationStatus, OwnerRole } from '@prisma/client';
+import { Prisma, TeamMemberRole, TeamMode, Team, TeamMember, User, GameProfile, RegistrationStatus, OwnerRole, TeamRegistrationState } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { SquadsService } from '../squads/squads.service';
 
@@ -361,45 +361,6 @@ export class TeamsService {
       throw error;
     }
 
-    if (team.tournamentId) {
-      const allMembers = await this.prisma.teamMember.findMany({
-        where: { teamId: team.id },
-      });
-      const mainCount = allMembers.filter(
-        (m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER,
-      ).length;
-
-      if (mainCount === 4) {
-        const existingReg = await this.prisma.tournamentRegistration.findFirst({
-          where: {
-            tournamentId: team.tournamentId,
-            teamId: team.id,
-            status: RegistrationStatus.CONFIRMED,
-          },
-        });
-        if (!existingReg) {
-          const tourney = await this.prisma.tournament.findUnique({
-            where: { id: team.tournamentId },
-          });
-          if (tourney) {
-            await this.prisma.tournamentRegistration.create({
-              data: {
-                tournamentId: team.tournamentId,
-                userId: team.captainId,
-                teamId: team.id,
-                status: RegistrationStatus.CONFIRMED,
-                slotNumber: tourney.registeredCount + 1,
-              },
-            });
-            await this.prisma.tournament.update({
-              where: { id: team.tournamentId },
-              data: { registeredCount: { increment: 1 } },
-            });
-          }
-        }
-      }
-    }
-
     if (this.squadsService) {
       await this.squadsService.syncTeamToSquad(team.id);
     }
@@ -644,6 +605,17 @@ export class TeamsService {
   }
 
   private async assertRosterUnlocked(teamId: string): Promise<void> {
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      select: { registrationState: true },
+    });
+    if (team?.registrationState === TeamRegistrationState.CONFIRMED) {
+      throw new BadRequestException({
+        code: 'TEAM_ROSTER_LOCKED',
+        message: 'The team roster cannot be changed after tournament registration.',
+      });
+    }
+
     const registration = await this.prisma.tournamentRegistration.findFirst({
       where: { teamId, status: RegistrationStatus.CONFIRMED },
       select: { id: true },

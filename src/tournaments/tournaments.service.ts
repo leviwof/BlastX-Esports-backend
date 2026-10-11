@@ -26,6 +26,7 @@ import {
   User,
   OwnerRole,
   UserRole,
+  TeamRegistrationState,
 } from '@prisma/client';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
@@ -653,17 +654,39 @@ export class TournamentsService implements OnModuleInit {
         tournamentId,
         status: RegistrationStatus.CONFIRMED,
       },
-      include: { team: { include: { members: true } } },
+      include: {
+        user: true,
+        team: {
+          include: {
+            members: {
+              include: { user: { include: { gameProfiles: true } } },
+            },
+          },
+        },
+      },
     });
+
+    // Idempotent return: if this team or solo user is already CONFIRMED, return existing registration with HTTP 200
+    if (tournament.teamMode === TeamMode.SOLO) {
+      const existingSolo = existingRegistrations.find((r) => r.userId === userId);
+      if (existingSolo) {
+        return existingSolo;
+      }
+    } else if (teamId) {
+      const existingTeamReg = existingRegistrations.find((r) => r.teamId === teamId);
+      if (existingTeamReg) {
+        return existingTeamReg;
+      }
+    }
 
     for (const reg of existingRegistrations) {
       if (tournament.teamMode === TeamMode.SOLO) {
         if (reg.userId === userId) {
-          throw new BadRequestException('You are already registered in this tournament');
+          return reg;
         }
       } else {
         if (reg.teamId === teamId) {
-          throw new BadRequestException('Your team is already registered in this tournament');
+          return reg;
         }
         // Check if any player in the registering team is in an already-registered team
         const registeredUserIds = reg.team
@@ -676,7 +699,6 @@ export class TournamentsService implements OnModuleInit {
           throw new BadRequestException('One or more of your team members are already registered in another team for this tournament');
         }
       }
-
     }
 
     if (teamId) {
@@ -825,6 +847,13 @@ export class TournamentsService implements OnModuleInit {
         }
       }
 
+      if (teamId) {
+        await tx.team.update({
+          where: { id: teamId },
+          data: { registrationState: TeamRegistrationState.CONFIRMED },
+        });
+      }
+
       this.eventEmitter.emit('registration.confirmed', {
         userId,
         tournamentId,
@@ -835,6 +864,7 @@ export class TournamentsService implements OnModuleInit {
       return registration;
     });
 
+    let slotUserIds = [userId];
     if (teamId) {
       const registeredTeam = await this.prisma.team.findUnique({
         where: { id: teamId },
@@ -847,16 +877,24 @@ export class TournamentsService implements OnModuleInit {
       });
 
       if (registeredTeam) {
+        slotUserIds = registeredTeam.members.map((m) => m.userId);
         this.eventEmitter.emit('squad.registered', {
           captainUserId: userId,
           captainName: registeredTeam.captain?.name || 'Your leader',
           teamName: registeredTeam.name,
           tournamentId,
           tournamentTitle: tournament.title,
-          memberUserIds: registeredTeam.members.map((m) => m.userId),
+          memberUserIds: slotUserIds,
         });
       }
     }
+
+    this.eventEmitter.emit('tournament.slot_confirmed', {
+      userIds: slotUserIds,
+      tournamentTitle: tournament.title,
+      tournamentId,
+      slotNumber: registration.slotNumber,
+    });
 
     return registration;
   }
@@ -900,6 +938,13 @@ export class TournamentsService implements OnModuleInit {
         where: { id: tournamentId },
         data: { registeredCount: { decrement: 1 } },
       });
+
+      if (registration.teamId) {
+        await tx.team.update({
+          where: { id: registration.teamId },
+          data: { registrationState: TeamRegistrationState.FORMING },
+        });
+      }
 
       // PHASE 3 HOOK: Refund entry fee if paid
       if (tournament.entryFee > 0) {
@@ -1067,8 +1112,41 @@ export class TournamentsService implements OnModuleInit {
     return tournament;
   }
 
+  private computeCanRegister(
+    team: {
+      captainId: string;
+      registrationState?: string | null;
+      members: { userId: string; role: TeamMemberRole }[];
+    },
+    userId: string,
+    tournament: { teamMode: TeamMode; status: TournamentStatus },
+  ): boolean {
+    const callerMember = team.members.find((m) => m.userId === userId);
+    const isLeaderOrManager =
+      team.captainId === userId ||
+      callerMember?.role === TeamMemberRole.CAPTAIN ||
+      callerMember?.role === TeamMemberRole.MANAGER;
+
+    const mainCount = team.members.filter(
+      (m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER,
+    ).length;
+
+    const meetsPlayerCount =
+      tournament.teamMode === TeamMode.SOLO
+        ? mainCount === 1
+        : tournament.teamMode === TeamMode.DUO
+        ? mainCount >= 2
+        : mainCount === 4;
+
+    const registrationState = (team.registrationState as string) ?? 'FORMING';
+    const isForming = registrationState === 'FORMING';
+    const isLive = tournament.status === TournamentStatus.LIVE;
+
+    return Boolean(isLeaderOrManager && meetsPlayerCount && isForming && isLive);
+  }
+
   async getMyTeamForTournament(userId: string, tournamentId: string) {
-    await this.getTournamentEntity(tournamentId);
+    const tournament = await this.getTournamentEntity(tournamentId);
 
     const formingTeam = await this.prisma.team.findFirst({
       where: {
@@ -1085,7 +1163,7 @@ export class TournamentsService implements OnModuleInit {
       },
     });
     if (formingTeam) {
-      let registration = await this.prisma.tournamentRegistration.findUnique({
+      const registration = await this.prisma.tournamentRegistration.findUnique({
         where: {
           unique_tournament_team: { tournamentId, teamId: formingTeam.id },
         },
@@ -1095,42 +1173,19 @@ export class TournamentsService implements OnModuleInit {
         (member) => member.role !== TeamMemberRole.SUBSTITUTE && member.role !== TeamMemberRole.MANAGER,
       ).length;
 
-      if (!registration && mainCount === 4) {
-        const tourney = await this.prisma.tournament.findUnique({ where: { id: tournamentId } });
-        if (tourney) {
-          try {
-            registration = await this.prisma.tournamentRegistration.create({
-              data: {
-                tournamentId,
-                userId: formingTeam.captainId,
-                teamId: formingTeam.id,
-                status: RegistrationStatus.CONFIRMED,
-                slotNumber: tourney.registeredCount + 1,
-              },
-            });
-            await this.prisma.tournament.update({
-              where: { id: tournamentId },
-              data: { registeredCount: { increment: 1 } },
-            });
-          } catch {
-            registration = await this.prisma.tournamentRegistration.findFirst({
-              where: {
-                tournamentId,
-                OR: [{ teamId: formingTeam.id }, { userId: formingTeam.captainId }],
-              },
-            });
-          }
-        }
-      }
-
       const isRegistered = registration?.status === RegistrationStatus.CONFIRMED;
       const invitations = await this.getLobbyInvitations(formingTeam.id);
+      const canRegister = this.computeCanRegister(formingTeam, userId, tournament);
+
       return {
         ...toTeamResponse(formingTeam as any),
         tournament_id: tournamentId,
         is_registered: isRegistered,
         slot_number: registration?.slotNumber ?? null,
         registration_status: isRegistered ? 'REGISTERED' : 'FORMING',
+        registration_state: formingTeam.registrationState ?? 'FORMING',
+        roster_version: formingTeam.rosterVersion ?? 1,
+        can_register: canRegister,
         invitations,
         is_ready: mainCount === 4,
       };
@@ -1155,12 +1210,17 @@ export class TournamentsService implements OnModuleInit {
     });
     if (pendingInvitation) {
       const invitations = await this.getLobbyInvitations(pendingInvitation.teamId);
+      const canRegister = this.computeCanRegister(pendingInvitation.team, userId, tournament);
+
       return {
         ...toTeamResponse(pendingInvitation.team as any),
         tournament_id: tournamentId,
         is_registered: false,
         slot_number: null,
         registration_status: null,
+        registration_state: pendingInvitation.team.registrationState ?? 'FORMING',
+        roster_version: pendingInvitation.team.rosterVersion ?? 1,
+        can_register: canRegister,
         invitations,
         my_invitation: {
           id: pendingInvitation.id,
@@ -1205,11 +1265,16 @@ export class TournamentsService implements OnModuleInit {
       return null;
     }
 
+    const canRegister = this.computeCanRegister(registration.team, userId, tournament);
+
     return {
       ...toTeamResponse(registration.team as any),
       tournament_id: tournamentId,
       slot_number: registration.slotNumber,
       registration_status: registration.status,
+      registration_state: registration.team.registrationState ?? 'FORMING',
+      roster_version: registration.team.rosterVersion ?? 1,
+      can_register: canRegister,
       invitations: await this.getLobbyInvitations(registration.team.id),
       is_ready:
         registration.team.members.filter(

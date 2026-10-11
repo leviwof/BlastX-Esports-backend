@@ -81,6 +81,15 @@ enum RegistrationStatus {
   WAITLIST
 }
 
+enum TeamRegistrationState {
+  FORMING
+  PENDING_PLAYER_APPROVAL
+  PENDING_PAYMENT
+  CONFIRMED
+  WAITLISTED
+  ROSTER_CHANGE_REQUIRED
+}
+
 enum MatchStatus {
   SCHEDULED
   LIVE
@@ -177,9 +186,11 @@ model Team {
   logoUrl              String?   @map("logo_url")
   captainId            String    @map("captain_id")
   ownerRole            OwnerRole @default(LEADER) @map("owner_role")
-  inviteCode           String    @unique @map("invite_code")
-  acceptingSubstitutes Boolean   @default(true) @map("accepting_substitutes")
-  createdAt            DateTime  @default(now()) @map("created_at")
+  inviteCode           String                @unique @map("invite_code")
+  acceptingSubstitutes Boolean               @default(true) @map("accepting_substitutes")
+  registrationState    TeamRegistrationState @default(FORMING) @map("registration_state")
+  rosterVersion        Int                   @default(1) @map("roster_version")
+  createdAt            DateTime              @default(now()) @map("created_at")
 
   game                  Game                     @relation(fields: [gameId], references: [id], onDelete: Cascade)
   tournament            Tournament?              @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
