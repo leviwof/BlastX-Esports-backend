@@ -130,11 +130,35 @@ export class NotificationsService implements OnModuleInit {
     }
 
     try {
-      const serviceAccount = JSON.parse(serviceAccountJson) as {
+      let serviceAccount: {
         project_id: string;
         client_email: string;
         private_key: string;
       };
+
+      try {
+        serviceAccount = JSON.parse(serviceAccountJson);
+      } catch {
+        // Fix unescaped newlines/carriage returns in private_key (common in Railway/env vars)
+        try {
+          const sanitized = serviceAccountJson.replace(
+            /"private_key"\s*:\s*"([\s\S]*?)"(?=\s*[,}])/g,
+            (_m, key) => {
+              const escaped = key.replace(/\r/g, '').replace(/\n/g, '\\n');
+              return `"private_key": "${escaped}"`;
+            },
+          );
+          serviceAccount = JSON.parse(sanitized);
+        } catch {
+          const cleaned = serviceAccountJson.replace(/[\x00-\x1F]/g, (c) => {
+            if (c === '\n') return '\\n';
+            if (c === '\r') return '';
+            if (c === '\t') return '\\t';
+            return '';
+          });
+          serviceAccount = JSON.parse(cleaned);
+        }
+      }
 
       if (!serviceAccount.project_id || !serviceAccount.client_email || !serviceAccount.private_key) {
         throw new Error('service account JSON must include project_id, client_email, and private_key');
