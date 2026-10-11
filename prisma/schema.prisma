@@ -118,6 +118,8 @@ model User {
   userChallenges            UserChallenge[]
   issueReports              IssueReport[]
   supportTickets            SupportTicket[]
+  deviceTokens              DeviceToken[]
+  notifications             Notification[]
 
   @@index([fcmToken], map: "users_fcm_token_idx")
   @@map("users")
@@ -805,4 +807,35 @@ model TournamentAuditLog {
   tournament     Tournament            @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
 
   @@map("tournament_audit_logs")
+}
+
+model DeviceToken {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  platform  String   @default("android")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+model Notification {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  type       String
+  title      String
+  body       String
+  data       Json     @default("{}")
+  isRead     Boolean  @default(false) @map("is_read")
+  pushStatus String   @default("PENDING") @map("push_status")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("notifications")
 }

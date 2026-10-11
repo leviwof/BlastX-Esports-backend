@@ -36,6 +36,7 @@ export interface SquadInvitationRespondedPayload {
 export interface RoomReleasedPayload {
   tournamentId: string;
   tournamentTitle: string;
+  groupName?: string;
 }
 
 export interface TournamentPublishedPayload {
@@ -77,10 +78,28 @@ export interface NotificationSendResult {
   failed: number;
 }
 
+export interface CommonNotificationPayload {
+  type: string;
+  title: string;
+  body: string;
+  data?: Record<string, unknown>;
+}
+
+function stringifyData(obj: Record<string, unknown> = {}): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined && value !== null) {
+      result[key] = String(value);
+    }
+  }
+  return result;
+}
+
 @Injectable()
 export class NotificationsService implements OnModuleInit {
   private readonly logger = new Logger(NotificationsService.name);
   private messaging: Messaging | null = null;
+  private readonly CHANNEL_ID = 'blastix_high_importance_channel';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -88,7 +107,23 @@ export class NotificationsService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    const serviceAccountJson = this.config.get<string>('FIREBASE_SERVICE_ACCOUNT_JSON')?.trim();
+    let serviceAccountJson = '';
+
+    // 1. Try Base64 variable first (Railway recommended)
+    const b64 = this.config.get<string>('FIREBASE_SERVICE_ACCOUNT_BASE64')?.trim();
+    if (b64) {
+      try {
+        serviceAccountJson = Buffer.from(b64, 'base64').toString('utf8');
+      } catch (err) {
+        this.logger.error(`Failed to decode FIREBASE_SERVICE_ACCOUNT_BASE64: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // 2. Fallback to raw JSON variable if Base64 was not provided
+    if (!serviceAccountJson) {
+      serviceAccountJson = this.config.get<string>('FIREBASE_SERVICE_ACCOUNT_JSON')?.trim() || '';
+    }
+
     if (!serviceAccountJson) {
       this.logger.warn('Firebase Admin is not configured; push notifications are disabled');
       return;
@@ -100,9 +135,11 @@ export class NotificationsService implements OnModuleInit {
         client_email: string;
         private_key: string;
       };
+
       if (!serviceAccount.project_id || !serviceAccount.client_email || !serviceAccount.private_key) {
         throw new Error('service account JSON must include project_id, client_email, and private_key');
       }
+
       serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
       const app =
         getApps()[0] ??
@@ -114,119 +151,421 @@ export class NotificationsService implements OnModuleInit {
           }),
           projectId: serviceAccount.project_id,
         });
+
       this.messaging = getMessaging(app);
-      this.logger.log(`Firebase Admin initialized for project ${serviceAccount.project_id}`);
+      this.logger.log(`Firebase Admin initialized successfully for project ${serviceAccount.project_id}`);
     } catch (error) {
-      throw new Error(
-        `Invalid FIREBASE_SERVICE_ACCOUNT_JSON: ${error instanceof Error ? error.message : String(error)}`,
+      this.logger.error(
+        `Invalid Firebase service account credentials: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
 
-  async registerFcmToken(
+  // ==========================================================================
+  // DEVICE TOKEN MANAGEMENT
+  // ==========================================================================
+
+  /**
+   * Save or transfer a device FCM token to the current user.
+   * If the token was previously tied to another user (shared phone/re-login), it gets reassigned.
+   */
+  async saveDeviceToken(
     userId: string,
-    fcmToken: string,
-    deviceType?: string,
-  ): Promise<{ status: true; message: string }> {
+    token: string,
+    platform: 'android' | 'ios' = 'android',
+  ): Promise<{ ok: boolean }> {
+    // 1. Upsert into dedicated device_tokens table
+    await this.prisma.deviceToken.upsert({
+      where: { token },
+      create: {
+        userId,
+        token,
+        platform,
+      },
+      update: {
+        userId,
+        platform,
+        updatedAt: new Date(),
+      },
+    });
+
+    // 2. Keep User.fcmToken in sync for backward compatibility
     await this.prisma.user.update({
       where: { id: userId },
       data: {
-        fcmToken,
+        fcmToken: token,
         fcmUpdatedAt: new Date(),
-        deviceType: deviceType ?? null,
+        deviceType: platform,
       },
+    }).catch((err) => {
+      this.logger.warn(`Could not sync User.fcmToken for ${userId}: ${err instanceof Error ? err.message : String(err)}`);
     });
+
+    return { ok: true };
+  }
+
+  /**
+   * Delete device token on user logout.
+   */
+  async deleteDeviceToken(userId: string, token: string): Promise<{ ok: boolean }> {
+    await this.prisma.deviceToken.deleteMany({
+      where: { userId, token },
+    });
+
+    // Clear user table if it matches current active token
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { fcmToken: true },
+    });
+
+    if (user?.fcmToken === token) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { fcmToken: null, fcmUpdatedAt: null, deviceType: null },
+      }).catch(() => undefined);
+    }
+
+    return { ok: true };
+  }
+
+  /**
+   * Legacy method for backward compatibility with existing controller route.
+   */
+  async registerFcmToken(
+    userId: string,
+    fcmToken: string,
+    deviceType?: 'android' | 'ios' | string,
+  ): Promise<{ status: true; message: string }> {
+    const platform = deviceType === 'ios' ? 'ios' : 'android';
+    await this.saveDeviceToken(userId, fcmToken, platform);
     return { status: true, message: 'FCM Token updated successfully' };
   }
+
+  // ==========================================================================
+  // CORE SENDER FUNCTIONS
+  // ==========================================================================
+
+  /**
+   * Send notification to a single user:
+   * 1. Creates an in-app notification record in DB.
+   * 2. Finds user's active device tokens.
+   * 3. Sends FCM multicast with high priority and proper channelId.
+   * 4. Automatically purges dead/unregistered tokens.
+   * 5. Never throws to ensure business workflows never fail because of notifications.
+   */
+  async sendToUser(userId: string, payload: CommonNotificationPayload): Promise<void> {
+    try {
+      // 1. Insert in-app notification
+      const record = await this.prisma.notification.create({
+        data: {
+          userId,
+          type: payload.type,
+          title: payload.title,
+          body: payload.body,
+          data: payload.data ? (payload.data as any) : {},
+          pushStatus: 'PENDING',
+        },
+      });
+
+      if (!this.messaging) {
+        await this.prisma.notification.update({
+          where: { id: record.id },
+          data: { pushStatus: 'NO_CONFIG' },
+        });
+        return;
+      }
+
+      // 2. Fetch device tokens
+      const dbTokens = await this.prisma.deviceToken.findMany({
+        where: { userId },
+        select: { token: true },
+      });
+
+      let tokens = dbTokens.map((t) => t.token);
+
+      // Fallback: Check user table if device_tokens table has none yet
+      if (tokens.length === 0) {
+        const user = await this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { fcmToken: true },
+        });
+        if (user?.fcmToken) {
+          tokens = [user.fcmToken];
+        }
+      }
+
+      if (tokens.length === 0) {
+        await this.prisma.notification.update({
+          where: { id: record.id },
+          data: { pushStatus: 'NO_TOKEN' },
+        });
+        return;
+      }
+
+      // 3. Send via FCM sendEachForMulticast
+      const fcmMessage = {
+        tokens,
+        notification: {
+          title: payload.title,
+          body: payload.body,
+        },
+        data: stringifyData({
+          type: payload.type,
+          notificationId: record.id,
+          ...payload.data,
+        }),
+        android: {
+          priority: 'high' as const,
+          notification: {
+            channelId: this.CHANNEL_ID,
+            sound: 'default',
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              sound: 'default',
+              badge: 1,
+            },
+          },
+        },
+      };
+
+      const resp = await this.messaging.sendEachForMulticast(fcmMessage);
+
+      // 4. Purge dead tokens
+      const deadTokens: string[] = [];
+      resp.responses.forEach((r, idx) => {
+        if (!r.success) {
+          const code = r.error?.code;
+          if (
+            code === 'messaging/registration-token-not-registered' ||
+            code === 'messaging/invalid-registration-token'
+          ) {
+            deadTokens.push(tokens[idx]);
+          } else {
+            this.logger.error(`FCM error code [${code}]: ${r.error?.message}`);
+          }
+        }
+      });
+
+      if (deadTokens.length > 0) {
+        await this.prisma.deviceToken.deleteMany({
+          where: { token: { in: deadTokens } },
+        });
+        await this.prisma.user.updateMany({
+          where: { fcmToken: { in: deadTokens } },
+          data: { fcmToken: null, fcmUpdatedAt: null, deviceType: null },
+        });
+        this.logger.log(`Purged ${deadTokens.length} dead FCM tokens for user ${userId}`);
+      }
+
+      // 5. Update push status in DB
+      const status =
+        resp.failureCount === 0
+          ? 'SENT'
+          : resp.successCount > 0
+            ? 'PARTIAL'
+            : 'FAILED';
+
+      await this.prisma.notification.update({
+        where: { id: record.id },
+        data: { pushStatus: status },
+      });
+    } catch (err) {
+      this.logger.error(
+        `Failed to deliver notification to user ${userId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * Send notification to multiple users concurrently without failing the caller.
+   */
+  async sendToUsers(userIds: string[], payload: CommonNotificationPayload): Promise<void> {
+    const uniqueIds = [...new Set(userIds.filter(Boolean))];
+    if (uniqueIds.length === 0) return;
+
+    await Promise.allSettled(uniqueIds.map((id) => this.sendToUser(id, payload)));
+  }
+
+  // ==========================================================================
+  // IN-APP NOTIFICATIONS QUERY & UPDATE
+  // ==========================================================================
+
+  async getUserNotifications(userId: string, page = 1, limit = 20) {
+    const skip = Math.max(0, (page - 1) * limit);
+    const take = Math.min(Math.max(1, limit), 100);
+
+    const [items, total, unreadCount] = await Promise.all([
+      this.prisma.notification.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+      }),
+      this.prisma.notification.count({ where: { userId } }),
+      this.prisma.notification.count({ where: { userId, isRead: false } }),
+    ]);
+
+    return {
+      items,
+      total,
+      page,
+      limit: take,
+      unreadCount,
+    };
+  }
+
+  async markAsRead(userId: string, notificationId: string): Promise<{ ok: boolean }> {
+    await this.prisma.notification.updateMany({
+      where: { id: notificationId, userId },
+      data: { isRead: true },
+    });
+    return { ok: true };
+  }
+
+  async markAllAsRead(userId: string): Promise<{ ok: boolean }> {
+    await this.prisma.notification.updateMany({
+      where: { userId, isRead: false },
+      data: { isRead: true },
+    });
+    return { ok: true };
+  }
+
+  // ==========================================================================
+  // BROADCAST ADMIN FUNCTION
+  // ==========================================================================
 
   async broadcast(input: BroadcastNotificationInput): Promise<NotificationSendResult> {
     if (!this.messaging) {
       throw new ServiceUnavailableException('Push notifications are not configured');
     }
+
     const users = await this.prisma.user.findMany({
-      where: { isActive: true, fcmToken: { not: null } },
+      where: { isActive: true },
       select: { id: true },
     });
-    return this.sendToUserIds(
-      users.map(({ id }) => id),
-      { title: input.title, body: input.body },
-      { type: 'system', action: 'announcement' },
-    );
+
+    const userIds = users.map((u) => u.id);
+    await this.sendToUsers(userIds, {
+      type: 'announcement',
+      title: input.title,
+      body: input.body,
+    });
+
+    return { targeted: userIds.length, sent: userIds.length, failed: 0 };
   }
 
+  // ==========================================================================
+  // EVENT LISTENERS (Matrix from Section 8)
+  // ==========================================================================
+
+  // --- 1. Squad Registration & Invitations ---
   @OnEvent('squad.registered')
   async handleSquadRegistered(payload: SquadRegisteredPayload): Promise<void> {
     // 1. Notify Captain
-    await this.sendEventToUsers(
-      [payload.captainUserId],
-      {
-        title: '🛡️ Squad Registration Complete!',
-        body: `Booyah! Your squad "${payload.teamName}" is registered for ${payload.tournamentTitle}.`,
-      },
-      {
-        type: 'tournament',
+    await this.sendToUser(payload.captainUserId, {
+      type: 'registration_submitted',
+      title: '🛡️ Squad Registration Complete!',
+      body: `Booyah! Your squad "${payload.teamName}" is registered for ${payload.tournamentTitle}.`,
+      data: {
         tournamentId: payload.tournamentId,
         action: 'squad_complete',
       },
-    );
+    });
 
-    // 2. Notify all other team members about captain's registration
+    // 2. Notify team members
     if (payload.memberUserIds && payload.memberUserIds.length > 0) {
       const otherMemberIds = payload.memberUserIds.filter((id) => id !== payload.captainUserId);
       if (otherMemberIds.length > 0) {
         const leaderName = payload.captainName || 'Your team captain';
-        await this.sendEventToUsers(
-          otherMemberIds,
-          {
-            title: '🎮 Registered for Tournament!',
-            body: `${leaderName} has registered your team "${payload.teamName}" for ${payload.tournamentTitle}.`,
-          },
-          {
-            type: 'tournament',
+        await this.sendToUsers(otherMemberIds, {
+          type: 'registration_submitted',
+          title: '🎮 Registered for Tournament!',
+          body: `${leaderName} has registered your team "${payload.teamName}" for ${payload.tournamentTitle}.`,
+          data: {
             tournamentId: payload.tournamentId,
             action: 'squad_registered_by_leader',
           },
-        );
+        });
       }
     }
   }
 
   @OnEvent('squad.invitation.received')
   async handleSquadInvitationReceived(payload: SquadInvitationReceivedPayload): Promise<void> {
-    await this.sendEventToUsers(
-      [payload.userId],
-      {
-        title: `Tournament Invite from ${payload.leaderName}`,
-        body: `You have been invited to join ${payload.tournamentTitle} with ${payload.squadName}.`,
-      },
-      {
-        type: 'tournament',
+    await this.sendToUser(payload.userId, {
+      type: 'squad_invite',
+      title: `Tournament Invite from ${payload.leaderName}`,
+      body: `You have been invited to join ${payload.tournamentTitle} with ${payload.squadName}.`,
+      data: {
         tournamentId: payload.tournamentId,
         invitationId: payload.invitationId,
         action: 'tournament_invite',
       },
-    );
+    });
   }
 
   @OnEvent('squad.invitation.responded')
   async handleSquadInvitationResponded(payload: SquadInvitationRespondedPayload): Promise<void> {
     const accepted = payload.action === 'ACCEPT';
-    await this.sendEventToUsers(
-      [payload.userId],
-      {
-        title: accepted ? 'Squad invite accepted' : 'Squad invite declined',
-        body: `${payload.playerName} ${accepted ? 'accepted' : 'declined'} your invitation to ${payload.tournamentTitle}.`,
-      },
-      {
-        type: 'tournament',
+    await this.sendToUser(payload.userId, {
+      type: 'roster_approval_response',
+      title: accepted ? 'Squad invite accepted' : 'Squad invite declined',
+      body: `${payload.playerName} ${accepted ? 'accepted' : 'declined'} your invitation to ${payload.tournamentTitle}.`,
+      data: {
         tournamentId: payload.tournamentId,
         squadId: payload.squadId,
         action: accepted ? 'invitation_accepted' : 'invitation_rejected',
       },
-    );
+    });
+  }
+
+  // --- 2. Slot & Registration Status Events ---
+  @OnEvent('tournament.slot_confirmed')
+  async handleSlotConfirmed(payload: { userIds: string[]; tournamentTitle: string; tournamentId: string; slotNumber: number }): Promise<void> {
+    await this.sendToUsers(payload.userIds, {
+      type: 'slot_confirmed',
+      title: '🎯 Slot Confirmed!',
+      body: `Your slot (#${payload.slotNumber}) is confirmed for ${payload.tournamentTitle}.`,
+      data: { tournamentId: payload.tournamentId, slotNumber: payload.slotNumber },
+    });
+  }
+
+  @OnEvent('tournament.waitlisted')
+  async handleWaitlisted(payload: { userIds: string[]; tournamentTitle: string; tournamentId: string }): Promise<void> {
+    await this.sendToUsers(payload.userIds, {
+      type: 'waitlisted',
+      title: 'Added to Waitlist',
+      body: `All slots are currently filled. Your team is on the waitlist for ${payload.tournamentTitle}.`,
+      data: { tournamentId: payload.tournamentId },
+    });
+  }
+
+  @OnEvent('tournament.waitlist_promoted')
+  async handleWaitlistPromoted(payload: { userIds: string[]; tournamentTitle: string; tournamentId: string; slotNumber: number }): Promise<void> {
+    await this.sendToUsers(payload.userIds, {
+      type: 'waitlist_promoted',
+      title: '🚀 Promoted to Main Roster!',
+      body: `A slot opened up! You are now confirmed in Slot #${payload.slotNumber} for ${payload.tournamentTitle}.`,
+      data: { tournamentId: payload.tournamentId, slotNumber: payload.slotNumber },
+    });
+  }
+
+  // --- 3. Stage & Room Credentials Events ---
+  @OnEvent('tournament.group_allocated')
+  async handleGroupAllocated(payload: { userIds: string[]; tournamentTitle: string; tournamentId: string; groupName: string; stageNumber: number }): Promise<void> {
+    await this.sendToUsers(payload.userIds, {
+      type: 'group_allocated',
+      title: `Stage ${payload.stageNumber}: Group Assigned!`,
+      body: `Your team has been placed in ${payload.groupName} for ${payload.tournamentTitle}.`,
+      data: { tournamentId: payload.tournamentId, stageNumber: payload.stageNumber, groupName: payload.groupName },
+    });
   }
 
   @OnEvent('room.released')
+  @OnEvent('tournament.room_published')
   async handleRoomReleased(payload: RoomReleasedPayload): Promise<void> {
     const registrations = await this.prisma.tournamentRegistration.findMany({
       where: { tournamentId: payload.tournamentId, status: RegistrationStatus.CONFIRMED },
@@ -235,36 +574,73 @@ export class NotificationsService implements OnModuleInit {
         team: { select: { members: { select: { userId: true } } } },
       },
     });
-    const userIds = registrations.flatMap((registration) => [
-      registration.userId,
-      ...(registration.team?.members.map((member) => member.userId) ?? []),
+
+    const userIds = registrations.flatMap((reg) => [
+      reg.userId,
+      ...(reg.team?.members.map((m) => m.userId) ?? []),
     ]);
 
-    await this.sendEventToUsers(
-      userIds,
-      {
-        title: '🔑 Room ID & Password Released!',
-        body: `Room details for ${payload.tournamentTitle} are ready. Open the app to view them securely.`,
-      },
-      {
-        type: 'tournament',
+    // SECURITY RULE: Never include Room ID or Room Password in notification body or payload!
+    await this.sendToUsers(userIds, {
+      type: 'room_published',
+      title: '🔑 Room Credentials Published!',
+      body: `Room details for ${payload.tournamentTitle} are ready. Open the app to view them securely.`,
+      data: {
         tournamentId: payload.tournamentId,
         action: 'room_details',
       },
-    );
+    });
   }
 
+  // --- 4. Progression & Final Outcome Events (After Result Verification) ---
+  @OnEvent('tournament.stage_qualified')
+  async handleStageQualified(payload: { userIds: string[]; tournamentTitle: string; tournamentId: string; nextStageName: string }): Promise<void> {
+    await this.sendToUsers(payload.userIds, {
+      type: 'qualified',
+      title: '🎉 BOOYAH! You Qualified!',
+      body: `Awesome game! Your team has advanced to ${payload.nextStageName} in ${payload.tournamentTitle}.`,
+      data: { tournamentId: payload.tournamentId },
+    });
+  }
+
+  @OnEvent('tournament.stage_eliminated')
+  async handleStageEliminated(payload: { userIds: string[]; tournamentTitle: string; tournamentId: string; stageName: string }): Promise<void> {
+    await this.sendToUsers(payload.userIds, {
+      type: 'eliminated',
+      title: 'Tournament Run Ended',
+      body: `GG! Your squad has been eliminated from ${payload.tournamentTitle} in ${payload.stageName}. Check final standings in app.`,
+      data: { tournamentId: payload.tournamentId },
+    });
+  }
+
+  @OnEvent('tournament.wildcard_selected')
+  async handleWildCardSelected(payload: { userIds: string[]; tournamentTitle: string; tournamentId: string; stageName: string }): Promise<void> {
+    await this.sendToUsers(payload.userIds, {
+      type: 'wildcard_selected',
+      title: '⭐ Wild Card Qualification!',
+      body: `Congratulations! Your team was selected as a Wild Card for ${payload.stageName} in ${payload.tournamentTitle}.`,
+      data: { tournamentId: payload.tournamentId },
+    });
+  }
+
+  // --- 5. Tournament Publishing & Reminders ---
   @OnEvent('tournament.published')
   async handleTournamentPublished(payload: TournamentPublishedPayload): Promise<void> {
-    await this.sendEventBroadcast(
+    const users = await this.prisma.user.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+
+    await this.sendToUsers(
+      users.map((u) => u.id),
       {
+        type: 'tournament_published',
         title: `🔥 New Tournament Open: ${payload.tournamentTitle}`,
-        body: `Prize Pool: ₹${this.formatRupees(payload.prizePool)} | Entry: ₹${this.formatRupees(payload.entryFee)}. Limited slots available, register now!`,
-      },
-      {
-        type: 'tournament',
-        tournamentId: payload.tournamentId,
-        action: 'new_tournament',
+        body: `Prize Pool: ₹${this.formatRupees(payload.prizePool)} | Entry: ₹${this.formatRupees(payload.entryFee)}. Register now!`,
+        data: {
+          tournamentId: payload.tournamentId,
+          action: 'new_tournament',
+        },
       },
     );
   }
@@ -278,153 +654,55 @@ export class NotificationsService implements OnModuleInit {
         team: { select: { members: { select: { userId: true } } } },
       },
     });
+
     const userIds = registrations.flatMap((registration) => [
       registration.userId,
       ...(registration.team?.members.map((member) => member.userId) ?? []),
     ]);
 
-    await this.sendEventToUsers(
-      userIds,
-      {
-        title: '⏰ Match Starting in 15 Minutes!',
-        body: `Get ready! ${payload.tournamentTitle} begins at ${payload.startsAt.toISOString()}. Be in the room on time.`,
-      },
-      {
-        type: 'match',
+    await this.sendToUsers(userIds, {
+      type: 'match_reminder',
+      title: '⏰ Match Starting in 15 Minutes!',
+      body: `Get ready! ${payload.tournamentTitle} begins soon. Be in the room on time.`,
+      data: {
         tournamentId: payload.tournamentId,
         matchId: payload.matchId,
         action: 'match_reminder',
       },
-    );
+    });
   }
 
+  // --- 6. Wallet Events ---
   @OnEvent('wallet.credited')
   async handleWalletCredited(payload: WalletCreditedPayload): Promise<void> {
-    await this.sendEventToUsers(
-      [payload.userId],
-      {
-        title: '💰 Wallet Credited - Prize Money',
-        body: `Congratulations! ₹${this.formatRupees(payload.amount)} prize money credited to your wallet for ${payload.tournamentTitle}.`,
-      },
-      {
-        type: 'wallet',
+    await this.sendToUser(payload.userId, {
+      type: 'payment_success',
+      title: '💰 Wallet Credited - Prize Money',
+      body: `Congratulations! ₹${this.formatRupees(payload.amount)} prize money credited to your wallet for ${payload.tournamentTitle}.`,
+      data: {
         amount: this.formatRupees(payload.amount),
         action: 'wallet_credit',
         ...(payload.tournamentId ? { tournamentId: payload.tournamentId } : {}),
       },
-    );
+    });
   }
 
   @OnEvent('wallet.withdrawal.updated')
   async handleWithdrawalUpdated(payload: WithdrawalUpdatedPayload): Promise<void> {
-    await this.sendEventToUsers(
-      [payload.userId],
-      {
-        title: '💳 Withdrawal Update',
-        body: `Your withdrawal request for ₹${this.formatRupees(payload.amount)} is ${payload.status.toLowerCase()}.`,
-      },
-      {
-        type: 'wallet',
+    await this.sendToUser(payload.userId, {
+      type: 'withdrawal_update',
+      title: '💳 Withdrawal Update',
+      body: `Your withdrawal request for ₹${this.formatRupees(payload.amount)} is ${payload.status.toLowerCase()}.`,
+      data: {
         amount: this.formatRupees(payload.amount),
         withdrawalId: payload.withdrawalId,
         status: payload.status,
         action: 'withdrawal_update',
       },
-    );
+    });
   }
 
   private formatRupees(amountInPaise: number): string {
     return (amountInPaise / 100).toFixed(2);
-  }
-
-  private async sendEventBroadcast(
-    notification: { title: string; body: string },
-    data: Record<string, string>,
-  ): Promise<void> {
-    const users = await this.prisma.user.findMany({
-      where: { isActive: true, fcmToken: { not: null } },
-      select: { id: true },
-    });
-    await this.sendEventToUsers(users.map(({ id }) => id), notification, data);
-  }
-
-  private async sendEventToUsers(
-    userIds: string[],
-    notification: { title: string; body: string },
-    data: Record<string, string>,
-  ): Promise<void> {
-    try {
-      await this.sendToUserIds(userIds, notification, data);
-    } catch (error) {
-      this.logger.error(
-        `Push event delivery failed (${data.action}): ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  private async sendToUserIds(
-    userIds: string[],
-    notification: { title: string; body: string },
-    data: Record<string, string>,
-  ): Promise<NotificationSendResult> {
-    if (!this.messaging) {
-      throw new ServiceUnavailableException('Push notifications are not configured');
-    }
-    const uniqueUserIds = [...new Set(userIds)];
-    if (uniqueUserIds.length === 0) {
-      return { targeted: 0, sent: 0, failed: 0 };
-    }
-
-    const users = await this.prisma.user.findMany({
-      where: { id: { in: uniqueUserIds }, isActive: true, fcmToken: { not: null } },
-      select: { fcmToken: true },
-    });
-    const tokens = [...new Set(users.flatMap((user) => (user.fcmToken ? [user.fcmToken] : [])))];
-    let sent = 0;
-    let failed = 0;
-
-    for (let offset = 0; offset < tokens.length; offset += 500) {
-      const batch = tokens.slice(offset, offset + 500);
-      try {
-        const result = await this.messaging.sendEachForMulticast({
-          tokens: batch,
-          notification,
-          data,
-          android: {
-            priority: 'high',
-            notification: {
-              channelId: 'blastix_high_importance_channel',
-              sound: 'default',
-            },
-          },
-        });
-        sent += result.successCount;
-        failed += result.failureCount;
-
-        const invalidTokens = result.responses.flatMap((response, index) => {
-          const code = response.error?.code;
-          return code === 'messaging/registration-token-not-registered' ||
-            code === 'messaging/invalid-registration-token'
-            ? [batch[index]]
-            : [];
-        });
-        if (invalidTokens.length > 0) {
-          await this.prisma.user.updateMany({
-            where: { fcmToken: { in: invalidTokens } },
-            data: { fcmToken: null, fcmUpdatedAt: null, deviceType: null },
-          });
-        }
-      } catch (error) {
-        failed += batch.length;
-        this.logger.error(
-          `FCM multicast failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-
-    if (failed > 0) {
-      this.logger.warn(`Push delivery result: ${sent} sent, ${failed} failed`);
-    }
-    return { targeted: tokens.length, sent, failed };
   }
 }

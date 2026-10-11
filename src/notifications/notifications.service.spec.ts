@@ -24,10 +24,16 @@ import { NotificationsService } from './notifications.service';
 
 describe('NotificationsService', () => {
   const userUpdate = jest.fn();
+  const deviceTokenUpsert = jest.fn();
   const prisma = {
     user: {
       update: userUpdate,
       findMany: jest.fn(),
+    },
+    deviceToken: {
+      upsert: deviceTokenUpsert,
+      deleteMany: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
     },
   } as unknown as PrismaService;
   const config = {
