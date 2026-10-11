@@ -112,14 +112,28 @@ export class NotificationsService implements OnModuleInit {
     // 1. Try Base64 variable first (Railway recommended)
     const b64 = this.config.get<string>('FIREBASE_SERVICE_ACCOUNT_BASE64')?.trim();
     if (b64) {
-      try {
-        serviceAccountJson = Buffer.from(b64, 'base64').toString('utf8');
-      } catch (err) {
-        this.logger.error(`Failed to decode FIREBASE_SERVICE_ACCOUNT_BASE64: ${err instanceof Error ? err.message : String(err)}`);
+      if (b64.startsWith('{')) {
+        // User pasted raw JSON directly into the BASE64 variable
+        serviceAccountJson = b64;
+      } else {
+        try {
+          const decoded = Buffer.from(b64, 'base64').toString('utf8');
+          if (decoded.trim().startsWith('{')) {
+            serviceAccountJson = decoded;
+          } else {
+            this.logger.warn(
+              'FIREBASE_SERVICE_ACCOUNT_BASE64 did not decode to a valid JSON object; falling back to FIREBASE_SERVICE_ACCOUNT_JSON',
+            );
+          }
+        } catch (err) {
+          this.logger.error(
+            `Failed to decode FIREBASE_SERVICE_ACCOUNT_BASE64: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
     }
 
-    // 2. Fallback to raw JSON variable if Base64 was not provided
+    // 2. Fallback to raw JSON variable if Base64 was not provided or invalid
     if (!serviceAccountJson) {
       serviceAccountJson = this.config.get<string>('FIREBASE_SERVICE_ACCOUNT_JSON')?.trim() || '';
     }
