@@ -37,7 +37,7 @@ import { SetRoomCredentialsDto } from './dto/set-room.dto';
 import { DisqualifyRegistrationDto } from './dto/disqualify.dto';
 import { validateStatusTransition } from './tournament-state-machine';
 import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
-import { toTeamResponse } from '../teams/team.mapper';
+import { toTeamResponse, toPrivacySafeTeamPreview, PrivacySafeTeamPreviewResponse } from '../teams/team.mapper';
 import { TournamentBracketResponse, TournamentStage, StageTeam } from './tournament.mapper';
 import { randomBytes } from 'crypto';
 import { SquadsService } from '../squads/squads.service';
@@ -1465,7 +1465,11 @@ export class TournamentsService implements OnModuleInit {
     };
   }
 
-  async previewTeamByCode(tournamentId: string, inviteCode: string, currentUserId?: string) {
+  async previewTeamByCode(
+    tournamentId: string,
+    inviteCode: string,
+    currentUserId?: string,
+  ): Promise<PrivacySafeTeamPreviewResponse> {
     const tournament = await this.getTournamentEntity(tournamentId);
 
     const team = await this.prisma.team.findFirst({
@@ -1479,7 +1483,7 @@ export class TournamentsService implements OnModuleInit {
         members: {
           include: {
             user: {
-              include: { gameProfiles: true },
+              select: { id: true, name: true, profilePic: true },
             },
           },
         },
@@ -1498,58 +1502,28 @@ export class TournamentsService implements OnModuleInit {
       },
     });
 
-    const mainCount = team.members.filter(
-      (m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER,
-    ).length;
-    const subCount = team.members.filter((m) => m.role === TeamMemberRole.SUBSTITUTE).length;
+    let myRequestStatus: 'NONE' | 'PENDING' | 'REJECTED' | 'CANCELLED' | 'APPROVED' = 'NONE';
+    if (currentUserId) {
+      const lastRequest = await this.prisma.teamJoinRequest.findFirst({
+        where: { teamId: team.id, userId: currentUserId },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (lastRequest) {
+        myRequestStatus = lastRequest.status as any;
+      }
+    }
+
     const maxMain = tournament.teamMode === TeamMode.DUO ? 2 : 4;
-    const maxSub = 1;
-
-    const isAlreadyMember = currentUserId ? team.members.some((m) => m.userId === currentUserId) : false;
     const isRegistered = registration?.status === RegistrationStatus.CONFIRMED;
-    const otherTournamentMembership = currentUserId
-      ? await this.prisma.teamMember.findFirst({
-          where: {
-            userId: currentUserId,
-            team: { tournamentId },
-          },
-          select: { teamId: true },
-        })
-      : null;
-    const isOnAnotherTeam =
-      !!otherTournamentMembership && otherTournamentMembership.teamId !== team.id;
-    const canJoinMain = mainCount < maxMain && !isAlreadyMember && !isOnAnotherTeam && !isRegistered;
-    const canJoinSub =
-      (team.acceptingSubstitutes ?? true) &&
-      subCount < maxSub &&
-      !isAlreadyMember &&
-      !isOnAnotherTeam &&
-      !isRegistered;
-    const isFull = !canJoinMain && !canJoinSub;
 
-    return {
-      ...toTeamResponse(team as any),
-      tournament_id: tournamentId,
-      captain_name: team.captain.name,
-      is_registered_in_tournament: isRegistered,
-      slot_number: registration?.slotNumber ?? null,
-      roster_info: {
-        main_players_count: mainCount,
-        max_main_players: maxMain,
-        substitute_count: subCount,
-        max_substitutes: maxSub,
-        accepting_substitutes: team.acceptingSubstitutes ?? true,
-        is_already_member: isAlreadyMember,
-        is_on_another_team: isOnAnotherTeam,
-        can_join_main: canJoinMain,
-        can_join_substitute: canJoinSub,
-        is_full: isFull,
-      },
-      main_count: mainCount,
-      max_main: maxMain,
-      is_main_full: mainCount >= maxMain,
-      can_join: !isAlreadyMember && !isFull,
-    };
+    return toPrivacySafeTeamPreview({
+      team: team as any,
+      maxMain,
+      maxSub: 1,
+      isRegistered,
+      currentUserId,
+      myRequestStatus,
+    });
   }
 
   async getTournamentBracket(tournamentId: string): Promise<TournamentBracketResponse> {

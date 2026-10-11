@@ -15,4 +15,10 @@ export class UpdateTeamDto {
   @IsString()
   @IsUrl()
   logo_url?: string;
+
+  @IsOptional()
+  require_join_approval?: boolean;
+
+  @IsOptional()
+  requireJoinApproval?: boolean;
 }

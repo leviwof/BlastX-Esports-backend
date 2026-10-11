@@ -16,6 +16,7 @@ import { MatchesService } from '../matches/matches.service';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { Public } from '../common/public.decorator';
 import { CurrentUser, JwtUser } from '../common/current-user.decorator';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { FilterTournamentQueryDto } from './dto/filter-tournament.dto';
 import { RegisterTournamentDto } from './dto/register-tournament.dto';
 import { CreateTournamentTeamDto } from './dto/create-tournament-team.dto';
@@ -251,7 +252,8 @@ export class TournamentsController {
   }
 
   @Get(':id/teams/code/:code')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   async getTeamByCode(
     @CurrentUser() user: JwtUser,
     @Param('id') id: string,
@@ -264,21 +266,21 @@ export class TournamentsController {
   @UseGuards(JwtAuthGuard)
   async joinTournamentTeamById(
     @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
     @Param('teamId') teamId: string,
     @Body() dto: JoinTeamDto,
-  ): Promise<TeamResponse> {
-    const team = await this.teamsService.joinTeam(user.sub, dto, teamId);
-    return toTeamResponse(team);
+  ): Promise<any> {
+    return this.teamsService.joinTeam(user.sub, dto, teamId, id);
   }
 
   @Post(':id/teams/join')
   @UseGuards(JwtAuthGuard)
   async joinTournamentTeam(
     @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
     @Body() dto: JoinTeamDto,
-  ): Promise<TeamResponse> {
-    const team = await this.teamsService.joinTeam(user.sub, dto);
-    return toTeamResponse(team);
+  ): Promise<any> {
+    return this.teamsService.joinTeam(user.sub, dto, undefined, id);
   }
 
   /**

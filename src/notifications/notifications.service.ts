@@ -67,6 +67,32 @@ export interface WithdrawalUpdatedPayload {
   withdrawalId: string;
 }
 
+export interface TeamJoinRequestedPayload {
+  teamId: string;
+  tournamentId?: string | null;
+  captainId: string;
+  requesterId: string;
+  requesterName: string;
+  teamName: string;
+  requestId: string;
+}
+
+export interface TeamJoinApprovedPayload {
+  teamId: string;
+  tournamentId?: string | null;
+  requesterId: string;
+  teamName: string;
+  requestId?: string;
+}
+
+export interface TeamJoinRejectedPayload {
+  teamId?: string;
+  tournamentId?: string | null;
+  requesterId: string;
+  teamName: string;
+  requestId?: string;
+}
+
 export interface BroadcastNotificationInput {
   title: string;
   body: string;
@@ -556,6 +582,49 @@ export class NotificationsService implements OnModuleInit {
         tournamentId: payload.tournamentId,
         squadId: payload.squadId,
         action: accepted ? 'invitation_accepted' : 'invitation_rejected',
+      },
+    });
+  }
+
+  // --- Team Join Requests (Section 2) ---
+  @OnEvent('team.join_requested')
+  async handleTeamJoinRequested(payload: TeamJoinRequestedPayload): Promise<void> {
+    await this.sendToUser(payload.captainId, {
+      type: 'join_request',
+      title: 'New join request',
+      body: `${payload.requesterName} wants to join ${payload.teamName}`,
+      data: {
+        teamId: payload.teamId,
+        tournamentId: payload.tournamentId ?? '',
+        requestId: payload.requestId,
+        action: 'join_request',
+      },
+    });
+  }
+
+  @OnEvent('team.join_approved')
+  async handleTeamJoinApproved(payload: TeamJoinApprovedPayload): Promise<void> {
+    await this.sendToUser(payload.requesterId, {
+      type: 'join_approved',
+      title: 'Join Request Approved',
+      body: `Your request to join ${payload.teamName} has been approved.`,
+      data: {
+        teamId: payload.teamId,
+        tournamentId: payload.tournamentId ?? '',
+        action: 'join_approved',
+      },
+    });
+  }
+
+  @OnEvent('team.join_rejected')
+  async handleTeamJoinRejected(payload: TeamJoinRejectedPayload): Promise<void> {
+    await this.sendToUser(payload.requesterId, {
+      type: 'join_rejected',
+      title: 'Join Request Declined',
+      body: `Your request to join ${payload.teamName} was declined.`,
+      data: {
+        tournamentId: payload.tournamentId ?? '',
+        action: 'join_rejected',
       },
     });
   }

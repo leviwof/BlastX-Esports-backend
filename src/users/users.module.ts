@@ -3,9 +3,10 @@ import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
 import { AdminUsersController } from './admin-users.controller';
 import { PrismaModule } from '../prisma/prisma.module';
+import { TeamsModule } from '../teams/teams.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, TeamsModule],
   controllers: [UsersController, AdminUsersController],
   providers: [UsersService],
   exports: [UsersService],

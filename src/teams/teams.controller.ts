@@ -17,25 +17,58 @@ export class TeamsController {
   @Post()
   async createTeam(@CurrentUser() user: JwtUser, @Body() dto: CreateTeamDto): Promise<TeamResponse> {
     const team = await this.teamsService.createTeam(user.sub, dto);
-    return toTeamResponse(team);
+    return toTeamResponse(team, user.sub);
   }
 
   @Get('me')
   async getMyTeams(@CurrentUser() user: JwtUser): Promise<TeamResponse[]> {
     const teams = await this.teamsService.getTeamsForUser(user.sub);
-    return teams.map(toTeamResponse);
+    return teams.map((t) => toTeamResponse(t, user.sub));
   }
 
-  @Get(':id')
-  async getTeamById(@Param('id') id: string): Promise<TeamResponse> {
-    const team = await this.teamsService.getTeamById(id);
-    return toTeamResponse(team);
+  @Post('join-requests/:requestId/cancel')
+  async cancelJoinRequest(
+    @CurrentUser() user: JwtUser,
+    @Param('requestId') requestId: string,
+  ) {
+    return this.teamsService.cancelJoinRequest(user.sub, requestId);
   }
 
   @Post('join')
-  async joinTeam(@CurrentUser() user: JwtUser, @Body() dto: JoinTeamDto): Promise<TeamResponse> {
-    const team = await this.teamsService.joinTeam(user.sub, dto);
-    return toTeamResponse(team);
+  async joinTeam(@CurrentUser() user: JwtUser, @Body() dto: JoinTeamDto): Promise<any> {
+    return this.teamsService.joinTeam(user.sub, dto);
+  }
+
+  @Get(':id/join-requests')
+  async getJoinRequests(
+    @CurrentUser() user: JwtUser,
+    @Param('id') teamId: string,
+  ) {
+    return this.teamsService.getPendingJoinRequests(user.sub, teamId);
+  }
+
+  @Post(':id/join-requests/:requestId/approve')
+  async approveJoinRequest(
+    @CurrentUser() user: JwtUser,
+    @Param('id') teamId: string,
+    @Param('requestId') requestId: string,
+  ) {
+    return this.teamsService.approveJoinRequest(user.sub, teamId, requestId);
+  }
+
+  @Post(':id/join-requests/:requestId/reject')
+  async rejectJoinRequest(
+    @CurrentUser() user: JwtUser,
+    @Param('id') teamId: string,
+    @Param('requestId') requestId: string,
+  ) {
+    return this.teamsService.rejectJoinRequest(user.sub, teamId, requestId);
+  }
+
+  @Get(':id')
+  async getTeamById(@CurrentUser() user: JwtUser, @Param('id') id: string): Promise<TeamResponse> {
+    const team = await this.teamsService.getTeamById(id, user.sub);
+    return toTeamResponse(team, user.sub);
   }
 
   @Post(':id/join')
@@ -43,9 +76,8 @@ export class TeamsController {
     @CurrentUser() user: JwtUser,
     @Param('id') id: string,
     @Body() dto: JoinTeamDto,
-  ): Promise<TeamResponse> {
-    const team = await this.teamsService.joinTeam(user.sub, dto, id);
-    return toTeamResponse(team);
+  ): Promise<any> {
+    return this.teamsService.joinTeam(user.sub, dto, id);
   }
 
   @Post(':id/leave')
@@ -82,7 +114,7 @@ export class TeamsController {
       throw new Error('Target new_captain_id is required');
     }
     const team = await this.teamsService.transferCaptaincy(user.sub, teamId, targetUserId);
-    return toTeamResponse(team);
+    return toTeamResponse(team, user.sub);
   }
 
   @Patch(':id/substitutes')
@@ -93,13 +125,13 @@ export class TeamsController {
   ): Promise<TeamResponse> {
     const value = dto.accepting_substitutes ?? dto.acceptingSubstitutes ?? true;
     const team = await this.teamsService.toggleSubstitutes(user.sub, teamId, value);
-    return toTeamResponse(team);
+    return toTeamResponse(team, user.sub);
   }
 
   @Post(':id/regenerate-invite')
   async regenerateInvite(@CurrentUser() user: JwtUser, @Param('id') teamId: string): Promise<TeamResponse> {
     const team = await this.teamsService.regenerateInviteCode(user.sub, teamId);
-    return toTeamResponse(team);
+    return toTeamResponse(team, user.sub);
   }
 
   @Patch(':id')
@@ -109,6 +141,6 @@ export class TeamsController {
     @Body() dto: UpdateTeamDto,
   ): Promise<TeamResponse> {
     const team = await this.teamsService.updateTeam(user.sub, teamId, dto);
-    return toTeamResponse(team);
+    return toTeamResponse(team, user.sub);
   }
 }

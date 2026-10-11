@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, ForbiddenException, Optional } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
@@ -9,22 +10,38 @@ import {
   TeamDetailResponse,
   toTeamSummaryResponse,
   toTeamDetailResponse,
+  toTeamResponse,
+  toPrivacySafeTeamPreview,
+  PrivacySafeTeamPreviewResponse,
 } from './team.mapper';
 import { PaginatedResult, createPaginatedResponse } from '../common/pagination.dto';
-import { Prisma, TeamMemberRole, TeamMode, Team, TeamMember, User, GameProfile, RegistrationStatus, OwnerRole, TeamRegistrationState } from '@prisma/client';
+import {
+  Prisma,
+  TeamMemberRole,
+  TeamMode,
+  Team,
+  TeamMember,
+  User,
+  GameProfile,
+  RegistrationStatus,
+  OwnerRole,
+  TeamRegistrationState,
+  TeamJoinRequestStatus,
+} from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { SquadsService } from '../squads/squads.service';
 
-
 export type TeamWithMembers = Team & {
   members: (TeamMember & { user: User & { gameProfiles?: GameProfile[] } })[];
+  pendingJoinRequestsCount?: number;
 };
 
 @Injectable()
 export class TeamsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly squadsService?: SquadsService,
+    @Optional() private readonly squadsService?: SquadsService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {}
 
   private generateInviteCode(): string {
@@ -152,13 +169,20 @@ export class TeamsService {
             },
           },
         },
+        _count: {
+          select: {
+            joinRequests: {
+              where: { status: TeamJoinRequestStatus.PENDING },
+            },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
-    return teams as TeamWithMembers[];
+    return teams as unknown as TeamWithMembers[];
   }
 
-  async getTeamById(teamId: string): Promise<TeamWithMembers> {
+  async getTeamById(teamId: string, callerUserId?: string): Promise<TeamWithMembers> {
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
       include: {
@@ -174,39 +198,36 @@ export class TeamsService {
     if (!team) {
       throw new NotFoundException('Team not found');
     }
-    return team as TeamWithMembers;
+    let pendingJoinRequestsCount: number | undefined = undefined;
+    if (callerUserId && team.captainId === callerUserId) {
+      pendingJoinRequestsCount = await this.prisma.teamJoinRequest.count({
+        where: { teamId, status: TeamJoinRequestStatus.PENDING },
+      });
+    }
+    return {
+      ...(team as TeamWithMembers),
+      pendingJoinRequestsCount,
+    };
   }
 
-  async joinTeam(userId: string, dto: JoinTeamDto, teamId?: string): Promise<TeamWithMembers> {
-    let team: (Team & { members: TeamMember[] }) | null = null;
-
-    if (teamId) {
-      team = await this.prisma.team.findUnique({
-        where: { id: teamId },
-        include: { members: true },
-      });
-      if (!team) {
-        throw new NotFoundException('Team not found');
-      }
-      if (dto.invite_code && dto.invite_code.toUpperCase() !== team.inviteCode.toUpperCase()) {
-        throw new BadRequestException('Invalid team invite code');
-      }
-    } else {
-      if (!dto.invite_code) {
-        throw new BadRequestException('Invite code is required to join a team');
-      }
-      team = await this.prisma.team.findFirst({
-        where: { inviteCode: { equals: dto.invite_code, mode: 'insensitive' } },
-        include: { members: true },
-      });
-      if (!team) {
-        throw new NotFoundException('Invalid team invite code');
-      }
+  async verifyJoinEligibility(
+    userId: string,
+    team: Team & { members: TeamMember[] },
+    dto: JoinTeamDto,
+    tournamentId?: string,
+  ): Promise<{
+    profile: GameProfile;
+    targetRole: TeamMemberRole;
+    isJoiningAsSubstitute: boolean;
+    maxMainPlayers: number;
+  }> {
+    if (tournamentId && team.tournamentId && team.tournamentId !== tournamentId) {
+      throw new NotFoundException('No team found matching this invite code for this tournament');
     }
 
     await this.assertRosterUnlocked(team.id);
 
-    // Must have a Game Profile for team's game
+    // Must have a Game Profile for team's game (upsert if provided in dto.player)
     let profile = await this.prisma.gameProfile.findUnique({
       where: {
         unique_user_game: {
@@ -254,11 +275,12 @@ export class TeamsService {
       throw new BadRequestException('You are already a member of this team');
     }
 
-    if (team.tournamentId) {
+    const effectiveTournamentId = tournamentId || team.tournamentId;
+    if (effectiveTournamentId) {
       const existingTournamentTeam = await this.prisma.teamMember.findFirst({
         where: {
           userId,
-          team: { tournamentId: team.tournamentId },
+          team: { tournamentId: effectiveTournamentId },
         },
         select: { teamId: true },
       });
@@ -266,23 +288,27 @@ export class TeamsService {
         throw new BadRequestException({
           success: false,
           status: 'error',
-          code: 'ALREADY_IN_TEAM',
-          error_code: 'ALREADY_IN_TEAM',
+          code: 'ALREADY_IN_TOURNAMENT',
+          error_code: 'ALREADY_IN_TOURNAMENT',
           message: 'You have already joined/registered for this tournament.',
         });
       }
     }
 
-    const tournament = team.tournamentId
+    const tournament = effectiveTournamentId
       ? await this.prisma.tournament.findUnique({
-          where: { id: team.tournamentId },
+          where: { id: effectiveTournamentId },
           select: { teamMode: true },
         })
       : null;
     const maxMainPlayers = tournament?.teamMode === TeamMode.DUO ? 2 : 4;
     const maxRosterSize = maxMainPlayers + (team.acceptingSubstitutes ? 1 : 0);
     if (team.members.length >= maxRosterSize) {
-      throw new BadRequestException(`Team roster is full (maximum ${maxRosterSize} members allowed)`);
+      throw new BadRequestException({
+        code: 'ROSTER_FULL',
+        error_code: 'ROSTER_FULL',
+        message: `Team roster is full (maximum ${maxRosterSize} members allowed)`,
+      });
     }
 
     // Determine target role (Substitute vs Main Player)
@@ -309,14 +335,20 @@ export class TeamsService {
         throw new BadRequestException('This team is not currently accepting substitutes');
       }
       if (existingSub) {
-        throw new BadRequestException('Team already has a substitute player');
+        throw new BadRequestException({
+          code: 'ROSTER_FULL',
+          error_code: 'ROSTER_FULL',
+          message: 'Team already has a substitute player',
+        });
       }
       targetRole = TeamMemberRole.SUBSTITUTE;
     } else {
       if (mainPlayers.length >= maxMainPlayers) {
-        throw new BadRequestException(
-          `Main roster is full (maximum ${maxMainPlayers} players). You can join as a substitute if the team accepts substitutes.`,
-        );
+        throw new BadRequestException({
+          code: 'ROSTER_FULL',
+          error_code: 'ROSTER_FULL',
+          message: `Main roster is full (maximum ${maxMainPlayers} players). You can join as a substitute if the team accepts substitutes.`,
+        });
       }
     }
 
@@ -340,16 +372,32 @@ export class TeamsService {
         },
       });
       if (conflicting) {
-        throw new BadRequestException(
-          'You are already registered with another team in an active tournament this team is participating in',
-        );
+        throw new BadRequestException({
+          code: 'ALREADY_IN_TOURNAMENT',
+          error_code: 'ALREADY_IN_TOURNAMENT',
+          message:
+            'You are already registered with another team in an active tournament this team is participating in',
+        });
       }
     }
 
+    return {
+      profile,
+      targetRole,
+      isJoiningAsSubstitute,
+      maxMainPlayers,
+    };
+  }
+
+  async addMemberToTeam(
+    teamId: string,
+    userId: string,
+    targetRole: TeamMemberRole = TeamMemberRole.PLAYER,
+  ): Promise<TeamWithMembers> {
     try {
       await this.prisma.teamMember.create({
         data: {
-          teamId: team.id,
+          teamId,
           userId,
           role: targetRole,
         },
@@ -362,10 +410,505 @@ export class TeamsService {
     }
 
     if (this.squadsService) {
-      await this.squadsService.syncTeamToSquad(team.id);
+      await this.squadsService.syncTeamToSquad(teamId);
     }
 
-    return this.getTeamById(team.id);
+    return this.getTeamById(teamId, userId);
+  }
+
+  async joinTeam(
+    userId: string,
+    dto: JoinTeamDto,
+    teamId?: string,
+    tournamentId?: string,
+  ): Promise<any> {
+    let team: (Team & { members: TeamMember[] }) | null = null;
+
+    if (teamId) {
+      team = await this.prisma.team.findUnique({
+        where: { id: teamId },
+        include: { members: true },
+      });
+      if (!team) {
+        throw new NotFoundException('Team not found');
+      }
+      if (dto.invite_code && dto.invite_code.toUpperCase() !== team.inviteCode.toUpperCase()) {
+        throw new BadRequestException('Invalid team invite code');
+      }
+    } else {
+      if (!dto.invite_code) {
+        throw new BadRequestException('Invite code is required to join a team');
+      }
+      team = await this.prisma.team.findFirst({
+        where: { inviteCode: { equals: dto.invite_code, mode: 'insensitive' } },
+        include: { members: true },
+      });
+      if (!team) {
+        throw new NotFoundException('Invalid team invite code');
+      }
+    }
+
+    const { targetRole, isJoiningAsSubstitute, maxMainPlayers } =
+      await this.verifyJoinEligibility(userId, team, dto, tournamentId);
+
+    if (team.requireJoinApproval) {
+      const pendingCount = await this.prisma.teamJoinRequest.count({
+        where: { userId, status: TeamJoinRequestStatus.PENDING },
+      });
+      if (pendingCount >= 5) {
+        throw new BadRequestException({
+          code: 'JOIN_REQUEST_LIMIT',
+          error_code: 'JOIN_REQUEST_LIMIT',
+          message: 'You have reached the limit of 5 pending join requests',
+        });
+      }
+
+      const buildPreview = async (reqStatus: TeamJoinRequestStatus) => {
+        const fullTeam = await this.prisma.team.findUnique({
+          where: { id: team!.id },
+          include: {
+            captain: true,
+            members: {
+              include: {
+                user: { select: { id: true, name: true, profilePic: true } },
+              },
+            },
+          },
+        });
+        const isRegistered = team!.tournamentId
+          ? !!(await this.prisma.tournamentRegistration.findUnique({
+              where: {
+                unique_tournament_team: {
+                  tournamentId: team!.tournamentId,
+                  teamId: team!.id,
+                },
+              },
+            }))
+          : false;
+
+        return toPrivacySafeTeamPreview({
+          team: fullTeam as any,
+          maxMain: maxMainPlayers,
+          maxSub: 1,
+          isRegistered,
+          currentUserId: userId,
+          myRequestStatus: reqStatus as any,
+        });
+      };
+
+      const existingRequest = await this.prisma.teamJoinRequest.findFirst({
+        where: {
+          teamId: team.id,
+          userId,
+          status: TeamJoinRequestStatus.PENDING,
+        },
+      });
+
+      if (existingRequest) {
+        const preview = await buildPreview(TeamJoinRequestStatus.PENDING);
+        return {
+          join_status: 'PENDING' as const,
+          request: {
+            id: existingRequest.id,
+            team_id: existingRequest.teamId,
+            user_id: existingRequest.userId,
+            status: existingRequest.status,
+            requested_as_substitute: existingRequest.requestedAsSubstitute,
+            created_at: existingRequest.createdAt,
+          },
+          team: preview,
+        };
+      }
+
+      const newRequest = await this.prisma.teamJoinRequest.create({
+        data: {
+          teamId: team.id,
+          userId,
+          requestedAsSubstitute: isJoiningAsSubstitute,
+          status: TeamJoinRequestStatus.PENDING,
+        },
+      });
+
+      const callerUser = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true },
+      });
+
+      this.events?.emit('team.join_requested', {
+        teamId: team.id,
+        tournamentId: team.tournamentId,
+        captainId: team.captainId,
+        requesterId: userId,
+        requesterName: callerUser?.name || 'A player',
+        teamName: team.name,
+        requestId: newRequest.id,
+      });
+
+      const preview = await buildPreview(TeamJoinRequestStatus.PENDING);
+      return {
+        join_status: 'PENDING' as const,
+        request: {
+          id: newRequest.id,
+          team_id: newRequest.teamId,
+          user_id: newRequest.userId,
+          status: newRequest.status,
+          requested_as_substitute: newRequest.requestedAsSubstitute,
+          created_at: newRequest.createdAt,
+        },
+        team: preview,
+      };
+    }
+
+    const updatedTeam = await this.addMemberToTeam(team.id, userId, targetRole);
+    return {
+      ...toTeamResponse(updatedTeam, userId),
+      join_status: 'JOINED' as const,
+    };
+  }
+
+  async getPendingJoinRequests(captainId: string, teamId: string) {
+    const team = await this.prisma.team.findUnique({ where: { id: teamId } });
+    if (!team) {
+      throw new NotFoundException('Team not found');
+    }
+    if (team.captainId !== captainId) {
+      throw new ForbiddenException({
+        code: 'NOT_TEAM_OWNER',
+        error_code: 'NOT_TEAM_OWNER',
+        message: 'Only the team captain or manager can view join requests',
+      });
+    }
+
+    const requests = await this.prisma.teamJoinRequest.findMany({
+      where: {
+        teamId,
+        status: TeamJoinRequestStatus.PENDING,
+      },
+      include: {
+        user: {
+          include: {
+            gameProfiles: {
+              where: { gameId: team.gameId },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return requests.map((req) => {
+      const profile = req.user.gameProfiles[0];
+      return {
+        id: req.id,
+        user: {
+          id: req.user.id,
+          name: req.user.name,
+          profile_pic: req.user.profilePic,
+        },
+        in_game_name: profile?.inGameName ?? null,
+        in_game_uid: profile?.inGameUid ?? null,
+        requested_as_substitute: req.requestedAsSubstitute,
+        created_at: req.createdAt,
+      };
+    });
+  }
+
+  async approveJoinRequest(captainId: string, teamId: string, requestId: string) {
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const team = await tx.team.findUnique({
+          where: { id: teamId },
+          include: { members: true },
+        });
+        if (!team) {
+          throw new NotFoundException({
+            code: 'TEAM_NOT_FOUND',
+            message: 'Team not found',
+          });
+        }
+        if (team.captainId !== captainId) {
+          throw new ForbiddenException({
+            code: 'NOT_TEAM_OWNER',
+            error_code: 'NOT_TEAM_OWNER',
+            message: 'Only the team captain or manager can approve join requests',
+          });
+        }
+
+        const request = await tx.teamJoinRequest.findUnique({
+          where: { id: requestId },
+        });
+        if (!request || request.teamId !== teamId) {
+          throw new NotFoundException({
+            code: 'JOIN_REQUEST_NOT_FOUND',
+            error_code: 'JOIN_REQUEST_NOT_FOUND',
+            message: 'Join request not found',
+          });
+        }
+        if (request.status !== TeamJoinRequestStatus.PENDING) {
+          throw new BadRequestException({
+            code: 'JOIN_REQUEST_NOT_PENDING',
+            error_code: 'JOIN_REQUEST_NOT_PENDING',
+            message: 'Join request is not pending',
+          });
+        }
+
+        // Assert roster unlocked
+        if (team.registrationState === TeamRegistrationState.CONFIRMED) {
+          throw new BadRequestException({
+            code: 'TEAM_ROSTER_LOCKED',
+            error_code: 'TEAM_ROSTER_LOCKED',
+            message: 'The team roster cannot be changed after tournament registration.',
+          });
+        }
+        const registration = await tx.tournamentRegistration.findFirst({
+          where: { teamId, status: RegistrationStatus.CONFIRMED },
+          select: { id: true },
+        });
+        if (registration) {
+          throw new BadRequestException({
+            code: 'TEAM_ROSTER_LOCKED',
+            error_code: 'TEAM_ROSTER_LOCKED',
+            message: 'The team roster cannot be changed after tournament registration.',
+          });
+        }
+
+        // Re-check user not already a member
+        const isMember = team.members.some((m) => m.userId === request.userId);
+        if (isMember) {
+          const updatedReq = await tx.teamJoinRequest.update({
+            where: { id: requestId },
+            data: {
+              status: TeamJoinRequestStatus.APPROVED,
+              resolvedAt: new Date(),
+              resolvedBy: captainId,
+            },
+          });
+          return { team, request: updatedReq, alreadyMember: true };
+        }
+
+        // User not in another team of the same tournament
+        if (team.tournamentId) {
+          const existingTournamentTeam = await tx.teamMember.findFirst({
+            where: {
+              userId: request.userId,
+              team: { tournamentId: team.tournamentId },
+            },
+            select: { teamId: true },
+          });
+          if (existingTournamentTeam && existingTournamentTeam.teamId !== team.id) {
+            throw new BadRequestException({
+              code: 'ALREADY_IN_TOURNAMENT',
+              error_code: 'ALREADY_IN_TOURNAMENT',
+              message: 'User is already registered with another team in this tournament.',
+            });
+          }
+        }
+
+        // Check capacity for requested role
+        const tournament = team.tournamentId
+          ? await tx.tournament.findUnique({
+              where: { id: team.tournamentId },
+              select: { teamMode: true },
+            })
+          : null;
+        const maxMainPlayers = tournament?.teamMode === TeamMode.DUO ? 2 : 4;
+
+        const mainPlayers = team.members.filter(
+          (m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER,
+        );
+        const existingSub = team.members.some((m) => m.role === TeamMemberRole.SUBSTITUTE);
+
+        let targetRole: TeamMemberRole = TeamMemberRole.PLAYER;
+        if (request.requestedAsSubstitute) {
+          if (!team.acceptingSubstitutes || existingSub) {
+            throw new BadRequestException({
+              code: 'ROSTER_FULL',
+              error_code: 'ROSTER_FULL',
+              message: 'Team roster is full for the requested substitute role',
+            });
+          }
+          targetRole = TeamMemberRole.SUBSTITUTE;
+        } else {
+          if (mainPlayers.length >= maxMainPlayers) {
+            throw new BadRequestException({
+              code: 'ROSTER_FULL',
+              error_code: 'ROSTER_FULL',
+              message: `Team roster is full (maximum ${maxMainPlayers} main players allowed)`,
+            });
+          }
+          targetRole = TeamMemberRole.PLAYER;
+        }
+
+        // Insert member
+        const member = await tx.teamMember.create({
+          data: {
+            teamId: team.id,
+            userId: request.userId,
+            role: targetRole,
+          },
+        });
+
+        // Mark request APPROVED
+        const updatedReq = await tx.teamJoinRequest.update({
+          where: { id: requestId },
+          data: {
+            status: TeamJoinRequestStatus.APPROVED,
+            resolvedAt: new Date(),
+            resolvedBy: captainId,
+          },
+        });
+
+        return { team, request: { ...request, ...updatedReq }, member, alreadyMember: false };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    if (this.squadsService) {
+      await this.squadsService.syncTeamToSquad(teamId);
+    }
+
+    this.events?.emit('team.join_approved', {
+      teamId: result.team.id,
+      tournamentId: result.team.tournamentId,
+      requesterId: result.request.userId,
+      teamName: result.team.name,
+      requestId: result.request.id,
+    });
+
+    return {
+      success: true,
+      status: 'APPROVED',
+      message: 'Join request approved',
+      request: result.request,
+    };
+  }
+
+  async rejectJoinRequest(captainId: string, teamId: string, requestId: string) {
+    const team = await this.prisma.team.findUnique({ where: { id: teamId } });
+    if (!team) {
+      throw new NotFoundException('Team not found');
+    }
+    if (team.captainId !== captainId) {
+      throw new ForbiddenException({
+        code: 'NOT_TEAM_OWNER',
+        error_code: 'NOT_TEAM_OWNER',
+        message: 'Only the team captain or manager can reject join requests',
+      });
+    }
+
+    const request = await this.prisma.teamJoinRequest.findUnique({ where: { id: requestId } });
+    if (!request || request.teamId !== teamId) {
+      throw new NotFoundException({
+        code: 'JOIN_REQUEST_NOT_FOUND',
+        error_code: 'JOIN_REQUEST_NOT_FOUND',
+        message: 'Join request not found',
+      });
+    }
+    if (request.status !== TeamJoinRequestStatus.PENDING) {
+      throw new BadRequestException({
+        code: 'JOIN_REQUEST_NOT_PENDING',
+        error_code: 'JOIN_REQUEST_NOT_PENDING',
+        message: 'Join request is not pending',
+      });
+    }
+
+    const updated = await this.prisma.teamJoinRequest.update({
+      where: { id: requestId },
+      data: {
+        status: TeamJoinRequestStatus.REJECTED,
+        resolvedAt: new Date(),
+        resolvedBy: captainId,
+      },
+    });
+
+    this.events?.emit('team.join_rejected', {
+      teamId: team.id,
+      tournamentId: team.tournamentId,
+      requesterId: request.userId,
+      teamName: team.name,
+      requestId: request.id,
+    });
+
+    return {
+      success: true,
+      status: 'REJECTED',
+      message: 'Join request rejected',
+      request: updated,
+    };
+  }
+
+  async cancelJoinRequest(userId: string, requestId: string) {
+    const request = await this.prisma.teamJoinRequest.findUnique({ where: { id: requestId } });
+    if (!request) {
+      throw new NotFoundException({
+        code: 'JOIN_REQUEST_NOT_FOUND',
+        error_code: 'JOIN_REQUEST_NOT_FOUND',
+        message: 'Join request not found',
+      });
+    }
+    if (request.userId !== userId) {
+      throw new ForbiddenException('You can only cancel your own join request');
+    }
+    if (request.status !== TeamJoinRequestStatus.PENDING) {
+      throw new BadRequestException({
+        code: 'JOIN_REQUEST_NOT_PENDING',
+        error_code: 'JOIN_REQUEST_NOT_PENDING',
+        message: 'Join request is not pending',
+      });
+    }
+
+    const updated = await this.prisma.teamJoinRequest.update({
+      where: { id: requestId },
+      data: {
+        status: TeamJoinRequestStatus.CANCELLED,
+        resolvedAt: new Date(),
+        resolvedBy: userId,
+      },
+    });
+
+    return {
+      success: true,
+      status: 'CANCELLED',
+      message: 'Join request cancelled',
+      request: updated,
+    };
+  }
+
+  async getUserJoinRequests(userId: string, status?: TeamJoinRequestStatus) {
+    const targetStatus = status || TeamJoinRequestStatus.PENDING;
+    const requests = await this.prisma.teamJoinRequest.findMany({
+      where: {
+        userId,
+        status: targetStatus,
+      },
+      include: {
+        team: {
+          select: {
+            id: true,
+            name: true,
+            tag: true,
+            logoUrl: true,
+            tournamentId: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return requests.map((r) => ({
+      id: r.id,
+      status: r.status,
+      requested_as_substitute: r.requestedAsSubstitute,
+      created_at: r.createdAt,
+      resolved_at: r.resolvedAt,
+      team: {
+        id: r.team.id,
+        name: r.team.name,
+        tag: r.team.tag,
+        logo_url: r.team.logoUrl,
+        tournament_id: r.team.tournamentId,
+      },
+    }));
   }
 
   async leaveTeam(userId: string, teamId: string): Promise<{ message: string }> {
@@ -529,16 +1072,19 @@ export class TeamsService {
       }
     }
 
+    const requireApproval = dto.require_join_approval ?? dto.requireJoinApproval;
+
     await this.prisma.team.update({
       where: { id: teamId },
       data: {
         ...(dto.name ? { name: dto.name } : {}),
         ...(dto.tag ? { tag: dto.tag.toUpperCase() } : {}),
         ...(dto.logo_url !== undefined ? { logoUrl: dto.logo_url } : {}),
+        ...(requireApproval !== undefined ? { requireJoinApproval: requireApproval } : {}),
       },
     });
 
-    return this.getTeamById(teamId);
+    return this.getTeamById(teamId, captainId);
   }
 
   async listAdminTeams(
@@ -604,7 +1150,7 @@ export class TeamsService {
     return toTeamDetailResponse(team);
   }
 
-  private async assertRosterUnlocked(teamId: string): Promise<void> {
+  async assertRosterUnlocked(teamId: string): Promise<void> {
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
       select: { registrationState: true },
@@ -612,6 +1158,7 @@ export class TeamsService {
     if (team?.registrationState === TeamRegistrationState.CONFIRMED) {
       throw new BadRequestException({
         code: 'TEAM_ROSTER_LOCKED',
+        error_code: 'TEAM_ROSTER_LOCKED',
         message: 'The team roster cannot be changed after tournament registration.',
       });
     }
@@ -623,6 +1170,7 @@ export class TeamsService {
     if (registration) {
       throw new BadRequestException({
         code: 'TEAM_ROSTER_LOCKED',
+        error_code: 'TEAM_ROSTER_LOCKED',
         message: 'The team roster cannot be changed after tournament registration.',
       });
     }

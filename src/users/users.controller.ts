@@ -8,10 +8,24 @@ import { UpsertGameProfileDto } from './dto/upsert-game-profile.dto';
 import { toGameProfileResponse, UserResponse, GameProfileResponse } from './user.mapper';
 import { GlobalLeaderboardQuery } from './dto/global-leaderboard.query';
 
+import { TeamJoinRequestStatus } from '@prisma/client';
+import { TeamsService } from '../teams/teams.service';
+
 @Controller('users')
 @UseGuards(JwtAuthGuard)
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly teamsService: TeamsService,
+  ) {}
+
+  @Get('me/join-requests')
+  async getMyJoinRequests(
+    @CurrentUser() user: JwtUser,
+    @Query('status') status?: TeamJoinRequestStatus,
+  ) {
+    return this.teamsService.getUserJoinRequests(user.sub, status);
+  }
 
   @Public()
   @Get('leaderboard')

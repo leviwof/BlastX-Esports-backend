@@ -90,6 +90,13 @@ enum TeamRegistrationState {
   ROSTER_CHANGE_REQUIRED
 }
 
+enum TeamJoinRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
 enum MatchStatus {
   SCHEDULED
   LIVE
@@ -129,6 +136,7 @@ model User {
   supportTickets            SupportTicket[]
   deviceTokens              DeviceToken[]
   notifications             Notification[]
+  teamJoinRequests          TeamJoinRequest[]
 
   @@index([fcmToken], map: "users_fcm_token_idx")
   @@map("users")
@@ -190,6 +198,7 @@ model Team {
   acceptingSubstitutes Boolean               @default(true) @map("accepting_substitutes")
   registrationState    TeamRegistrationState @default(FORMING) @map("registration_state")
   rosterVersion        Int                   @default(1) @map("roster_version")
+  requireJoinApproval  Boolean               @default(true) @map("require_join_approval")
   createdAt            DateTime              @default(now()) @map("created_at")
 
   game                  Game                     @relation(fields: [gameId], references: [id], onDelete: Cascade)
@@ -202,6 +211,7 @@ model Team {
   groupTeams            TournamentGroupTeam[]
   qualifications        RoundQualification[]
   wildCardSlots         WildCardSlot[]
+  joinRequests          TeamJoinRequest[]
 
   @@unique([gameId, tournamentId, name], name: "unique_game_tournament_team_name")
   @@unique([tournamentId, persistentSquadId], name: "unique_tournament_persistent_squad")
@@ -225,6 +235,24 @@ model TeamMember {
   @@unique([teamId, userId], name: "unique_team_user")
   @@index([userId])
   @@map("team_members")
+}
+
+model TeamJoinRequest {
+  id                    String                @id @default(cuid())
+  teamId                String                @map("team_id")
+  userId                String                @map("user_id")
+  requestedAsSubstitute Boolean               @default(false) @map("requested_as_substitute")
+  status                TeamJoinRequestStatus @default(PENDING)
+  createdAt             DateTime              @default(now()) @map("created_at")
+  resolvedAt            DateTime?             @map("resolved_at")
+  resolvedBy            String?               @map("resolved_by")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([teamId, status])
+  @@index([userId, status])
+  @@map("team_join_requests")
 }
 
 model Tournament {
