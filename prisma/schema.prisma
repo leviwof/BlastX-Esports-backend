@@ -97,6 +97,19 @@ enum TeamJoinRequestStatus {
   CANCELLED
 }
 
+enum RegistrationSubmissionStatus {
+  ACTIVE
+  SUPERSEDED
+  CANCELLED
+  COMPLETED
+}
+
+enum RegistrationApprovalStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
 enum MatchStatus {
   SCHEDULED
   LIVE
@@ -137,6 +150,7 @@ model User {
   deviceTokens              DeviceToken[]
   notifications             Notification[]
   teamJoinRequests          TeamJoinRequest[]
+  registrationApprovals     RegistrationApproval[]
 
   @@index([fcmToken], map: "users_fcm_token_idx")
   @@map("users")
@@ -212,6 +226,8 @@ model Team {
   qualifications        RoundQualification[]
   wildCardSlots         WildCardSlot[]
   joinRequests          TeamJoinRequest[]
+  registrationSubmissions RegistrationSubmission[]
+  registrationEvents      RegistrationEvent[]
 
   @@unique([gameId, tournamentId, name], name: "unique_game_tournament_team_name")
   @@unique([tournamentId, persistentSquadId], name: "unique_tournament_persistent_squad")
@@ -253,6 +269,61 @@ model TeamJoinRequest {
   @@index([teamId, status])
   @@index([userId, status])
   @@map("team_join_requests")
+}
+
+model RegistrationSubmission {
+  id             String                       @id @default(cuid())
+  tournamentId   String                       @map("tournament_id")
+  teamId         String                       @map("team_id")
+  rosterVersion  Int                          @map("roster_version")
+  submittedBy    String                       @map("submitted_by")
+  ownerUserId    String                       @map("owner_user_id")
+  playingUserIds String[]                     @map("playing_user_ids")
+  status         RegistrationSubmissionStatus @default(ACTIVE)
+  createdAt      DateTime                     @default(now()) @map("created_at")
+  completedAt    DateTime?                    @map("completed_at")
+
+  tournament     Tournament                   @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  team           Team                         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  approvals      RegistrationApproval[]
+
+  @@index([teamId, status])
+  @@index([tournamentId])
+  @@map("registration_submissions")
+}
+
+model RegistrationApproval {
+  id           String                     @id @default(cuid())
+  submissionId String                     @map("submission_id")
+  userId       String                     @map("user_id")
+  status       RegistrationApprovalStatus @default(PENDING)
+  respondedAt  DateTime?                  @map("responded_at")
+  createdAt    DateTime                   @default(now()) @map("created_at")
+
+  submission   RegistrationSubmission     @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  user         User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([submissionId, userId], name: "unique_submission_user")
+  @@index([userId, status])
+  @@map("registration_approvals")
+}
+
+model RegistrationEvent {
+  id            String      @id @default(cuid())
+  tournamentId  String      @map("tournament_id")
+  teamId        String      @map("team_id")
+  submissionId  String?     @map("submission_id")
+  actorUserId   String?     @map("actor_user_id")
+  eventType     String      @map("event_type")
+  rosterVersion Int?        @map("roster_version")
+  details       Json        @default("{}")
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  tournament    Tournament  @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  team          Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([teamId, createdAt])
+  @@map("registration_events")
 }
 
 model Tournament {
@@ -302,6 +373,9 @@ model Tournament {
   rounds                TournamentRound[]
   wildCardWindow        WildCardWindow?
   auditLogs             TournamentAuditLog[]
+  requirePlayerApproval Boolean               @default(true) @map("require_player_approval")
+  registrationSubmissions RegistrationSubmission[]
+  registrationEvents      RegistrationEvent[]
 
   // NEW fields for format engine
   registrationUnitCount  Int?                  @map("registration_unit_count")

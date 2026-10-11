@@ -38,6 +38,7 @@ import { TeamsService } from '../teams/teams.service';
 import { JoinTeamDto } from '../teams/dto/join-team.dto';
 import { toTeamResponse, TeamResponse } from '../teams/team.mapper';
 import { TournamentBracketService } from './tournament-bracket.service';
+import { RegistrationService } from './registration.service';
 
 @Controller(['tournaments', 'api/tournaments'])
 export class TournamentsController {
@@ -47,6 +48,7 @@ export class TournamentsController {
     private readonly jwtService: JwtService,
     private readonly teamsService: TeamsService,
     private readonly bracketService: TournamentBracketService,
+    private readonly registrationService: RegistrationService,
   ) {}
 
   @Public()
@@ -146,6 +148,16 @@ export class TournamentsController {
   @UseGuards(JwtAuthGuard)
   async unregisterPost(@CurrentUser() user: JwtUser, @Param('id') id: string): Promise<{ message: string }> {
     return this.tournamentsService.unregisterUserOrTeam(user.sub, id);
+  }
+
+  @Post(':id/teams/:teamId/registration/cancel-request')
+  @UseGuards(JwtAuthGuard)
+  async cancelRegistrationRequest(
+    @CurrentUser() user: JwtUser,
+    @Param('id') tournamentId: string,
+    @Param('teamId') teamId: string,
+  ) {
+    return this.registrationService.cancelRegistrationRequest(user.sub, tournamentId, teamId);
   }
 
   @Get(':id/room')

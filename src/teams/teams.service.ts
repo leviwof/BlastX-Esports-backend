@@ -30,6 +30,7 @@ import {
 } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { SquadsService } from '../squads/squads.service';
+import { handleRosterChange } from './roster-change.helper';
 
 export type TeamWithMembers = Team & {
   members: (TeamMember & { user: User & { gameProfiles?: GameProfile[] } })[];
@@ -394,13 +395,34 @@ export class TeamsService {
     userId: string,
     targetRole: TeamMemberRole = TeamMemberRole.PLAYER,
   ): Promise<TeamWithMembers> {
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      include: { members: true },
+    });
+    const beforeMain = team
+      ? team.members
+          .filter((m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER)
+          .map((m) => m.userId)
+      : [];
+    const beforeCaptainId = team?.captainId ?? '';
+
     try {
-      await this.prisma.teamMember.create({
-        data: {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.teamMember.create({
+          data: {
+            teamId,
+            userId,
+            role: targetRole,
+          },
+        });
+
+        await handleRosterChange(
+          tx,
           teamId,
+          { captainId: beforeCaptainId, mainUserIds: beforeMain },
+          this.events,
           userId,
-          role: targetRole,
-        },
+        );
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -653,13 +675,20 @@ export class TeamsService {
         }
 
         // Assert roster unlocked
-        if (team.registrationState === TeamRegistrationState.CONFIRMED) {
+        if (
+          team.registrationState === TeamRegistrationState.CONFIRMED ||
+          team.registrationState === TeamRegistrationState.WAITLISTED
+        ) {
           throw new BadRequestException({
             code: 'TEAM_ROSTER_LOCKED',
             error_code: 'TEAM_ROSTER_LOCKED',
             message: 'The team roster cannot be changed after tournament registration.',
           });
         }
+        const beforeMain = team.members
+          .filter((m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER)
+          .map((m) => m.userId);
+        const beforeCaptainId = team.captainId;
         const registration = await tx.tournamentRegistration.findFirst({
           where: { teamId, status: RegistrationStatus.CONFIRMED },
           select: { id: true },
@@ -757,6 +786,14 @@ export class TeamsService {
             resolvedBy: captainId,
           },
         });
+
+        await handleRosterChange(
+          tx,
+          team.id,
+          { captainId: beforeCaptainId, mainUserIds: beforeMain },
+          this.events,
+          captainId,
+        );
 
         return { team, request: { ...request, ...updatedReq }, member, alreadyMember: false };
       },
@@ -923,13 +960,28 @@ export class TeamsService {
       throw new BadRequestException('A captain cannot leave without transferring captaincy or disbanding the team');
     }
 
-    await this.prisma.teamMember.delete({
-      where: {
-        unique_team_user: {
-          teamId,
-          userId,
+    const beforeMain = team.members
+      .filter((m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER)
+      .map((m) => m.userId);
+    const beforeCaptainId = team.captainId;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.teamMember.delete({
+        where: {
+          unique_team_user: {
+            teamId,
+            userId,
+          },
         },
-      },
+      });
+
+      await handleRosterChange(
+        tx,
+        teamId,
+        { captainId: beforeCaptainId, mainUserIds: beforeMain },
+        this.events,
+        userId,
+      );
     });
 
     return { message: 'Successfully left the team' };
@@ -951,13 +1003,28 @@ export class TeamsService {
       throw new NotFoundException('Target user is not a member of this team');
     }
 
-    await this.prisma.teamMember.delete({
-      where: {
-        unique_team_user: {
-          teamId,
-          userId: targetUserId,
+    const beforeMain = team.members
+      .filter((m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER)
+      .map((m) => m.userId);
+    const beforeCaptainId = team.captainId;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.teamMember.delete({
+        where: {
+          unique_team_user: {
+            teamId,
+            userId: targetUserId,
+          },
         },
-      },
+      });
+
+      await handleRosterChange(
+        tx,
+        teamId,
+        { captainId: beforeCaptainId, mainUserIds: beforeMain },
+        this.events,
+        captainId,
+      );
     });
 
     return { message: 'Member removed from team' };
@@ -989,9 +1056,14 @@ export class TeamsService {
     const newRoleForNewOwner =
       team.ownerRole === OwnerRole.MANAGER ? TeamMemberRole.MANAGER : TeamMemberRole.CAPTAIN;
 
-    await this.prisma.$transaction([
+    const beforeMain = team.members
+      .filter((m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER)
+      .map((m) => m.userId);
+    const beforeCaptainId = team.captainId;
+
+    await this.prisma.$transaction(async (tx) => {
       // Downgrade current captain/manager to PLAYER
-      this.prisma.teamMember.update({
+      await tx.teamMember.update({
         where: {
           unique_team_user: {
             teamId,
@@ -999,9 +1071,9 @@ export class TeamsService {
           },
         },
         data: { role: TeamMemberRole.PLAYER },
-      }),
+      });
       // Upgrade target member to CAPTAIN or MANAGER
-      this.prisma.teamMember.update({
+      await tx.teamMember.update({
         where: {
           unique_team_user: {
             teamId,
@@ -1009,15 +1081,158 @@ export class TeamsService {
           },
         },
         data: { role: newRoleForNewOwner },
-      }),
+      });
       // Update team captainId
-      this.prisma.team.update({
+      await tx.team.update({
         where: { id: teamId },
         data: { captainId: newCaptainId },
-      }),
-    ]);
+      });
+
+      await handleRosterChange(
+        tx,
+        teamId,
+        { captainId: beforeCaptainId, mainUserIds: beforeMain },
+        this.events,
+        captainId,
+      );
+    });
 
     return this.getTeamById(teamId);
+  }
+
+  async updatePlayingRoster(
+    ownerId: string,
+    teamId: string,
+    mainUserIds: string[],
+  ): Promise<TeamWithMembers> {
+    const team = await this.getTeamById(teamId, ownerId);
+    if (!team.tournamentId) {
+      throw new BadRequestException({
+        code: 'TEAM_NOT_TOURNAMENT_SCOPED',
+        error_code: 'TEAM_NOT_TOURNAMENT_SCOPED',
+        message: 'Playing roster management is only available for tournament teams',
+      });
+    }
+
+    if (team.captainId !== ownerId) {
+      throw new ForbiddenException({
+        code: 'NOT_TEAM_OWNER',
+        error_code: 'NOT_TEAM_OWNER',
+        message: 'Only the team owner can change the playing roster',
+      });
+    }
+
+    if (
+      team.registrationState === TeamRegistrationState.CONFIRMED ||
+      team.registrationState === TeamRegistrationState.WAITLISTED
+    ) {
+      throw new BadRequestException({
+        code: 'TEAM_ROSTER_LOCKED',
+        error_code: 'TEAM_ROSTER_LOCKED',
+        message: 'The team roster cannot be changed after tournament registration.',
+      });
+    }
+
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: team.tournamentId },
+      select: { teamMode: true },
+    });
+    const requiredMainCount = tournament?.teamMode === TeamMode.DUO ? 2 : 4;
+
+    const uniqueMainIds = Array.from(new Set(mainUserIds));
+    if (uniqueMainIds.length !== requiredMainCount) {
+      throw new BadRequestException({
+        code: 'INVALID_PLAYING_ROSTER',
+        error_code: 'INVALID_PLAYING_ROSTER',
+        message: `Playing roster must contain exactly ${requiredMainCount} unique players`,
+      });
+    }
+
+    const teamMemberMap = new Map(team.members.map((m) => [m.userId, m]));
+    for (const uid of uniqueMainIds) {
+      const member = teamMemberMap.get(uid);
+      if (!member) {
+        throw new BadRequestException({
+          code: 'INVALID_PLAYING_ROSTER',
+          error_code: 'INVALID_PLAYING_ROSTER',
+          message: `User ${uid} is not a member of this team`,
+        });
+      }
+      if (member.role === TeamMemberRole.MANAGER) {
+        throw new BadRequestException({
+          code: 'MANAGER_CANNOT_PLAY',
+          error_code: 'MANAGER_CANNOT_PLAY',
+          message: 'Team managers cannot be in the playing roster',
+        });
+      }
+    }
+
+    if (team.ownerRole === OwnerRole.LEADER && !uniqueMainIds.includes(team.captainId)) {
+      throw new BadRequestException({
+        code: 'LEADER_MUST_PLAY',
+        error_code: 'LEADER_MUST_PLAY',
+        message: 'The team leader must be included in the playing roster',
+      });
+    }
+
+    const substituteCandidates = team.members.filter(
+      (m) => m.role !== TeamMemberRole.MANAGER && !uniqueMainIds.includes(m.userId),
+    );
+
+    if (substituteCandidates.length > 0) {
+      if (!team.acceptingSubstitutes) {
+        throw new BadRequestException({
+          code: 'SUBSTITUTE_LIMIT',
+          error_code: 'SUBSTITUTE_LIMIT',
+          message: 'This team is not currently accepting substitutes',
+        });
+      }
+      if (substituteCandidates.length > 1) {
+        throw new BadRequestException({
+          code: 'SUBSTITUTE_LIMIT',
+          error_code: 'SUBSTITUTE_LIMIT',
+          message: 'Maximum 1 substitute player allowed',
+        });
+      }
+    }
+
+    const beforeMain = team.members
+      .filter((m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER)
+      .map((m) => m.userId);
+    const beforeCaptainId = team.captainId;
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const member of team.members) {
+          if (member.role === TeamMemberRole.MANAGER || member.role === TeamMemberRole.CAPTAIN) {
+            continue;
+          }
+
+          if (uniqueMainIds.includes(member.userId) && member.role === TeamMemberRole.SUBSTITUTE) {
+            await tx.teamMember.update({
+              where: { id: member.id },
+              data: { role: TeamMemberRole.PLAYER },
+            });
+          } else if (!uniqueMainIds.includes(member.userId) && member.role === TeamMemberRole.PLAYER) {
+            await tx.teamMember.update({
+              where: { id: member.id },
+              data: { role: TeamMemberRole.SUBSTITUTE },
+            });
+          }
+        }
+
+        await handleRosterChange(
+          tx,
+          teamId,
+          { captainId: beforeCaptainId, mainUserIds: beforeMain },
+          this.events,
+          ownerId,
+        );
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    return this.getTeamById(teamId, ownerId);
   }
 
   async toggleSubstitutes(captainId: string, teamId: string, accepting: boolean): Promise<TeamWithMembers> {
@@ -1155,7 +1370,10 @@ export class TeamsService {
       where: { id: teamId },
       select: { registrationState: true },
     });
-    if (team?.registrationState === TeamRegistrationState.CONFIRMED) {
+    if (
+      team?.registrationState === TeamRegistrationState.CONFIRMED ||
+      team?.registrationState === TeamRegistrationState.WAITLISTED
+    ) {
       throw new BadRequestException({
         code: 'TEAM_ROSTER_LOCKED',
         error_code: 'TEAM_ROSTER_LOCKED',

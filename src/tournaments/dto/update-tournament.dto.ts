@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsEnum, IsInt, Min, IsUrl, IsDateString } from 'class-validator';
+import { IsOptional, IsString, IsEnum, IsInt, Min, IsUrl, IsDateString, IsBoolean } from 'class-validator';
 import { TournamentFormat, TeamMode, TournamentSection } from '@prisma/client';
 import { Type } from 'class-transformer';
 
@@ -124,4 +124,12 @@ export class UpdateTournamentDto {
 
   @IsOptional()
   announcements?: any;
+
+  @IsOptional()
+  @IsBoolean()
+  require_player_approval?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  requirePlayerApproval?: boolean;
 }

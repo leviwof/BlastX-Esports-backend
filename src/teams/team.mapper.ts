@@ -21,6 +21,26 @@ export interface TeamMemberResponse {
   };
 }
 
+export interface TeamRegistrationPlayer {
+  user_id: string;
+  name: string;
+  avatar: string | null;
+  role: string;
+  is_playing: boolean;
+  approval_status: 'PENDING' | 'APPROVED' | 'DECLINED' | 'NOT_REQUIRED';
+}
+
+export interface TeamRegistrationInfo {
+  submission_id: string | null;
+  state: string;
+  roster_version: number;
+  require_player_approval: boolean;
+  required_count: number;
+  approved_count: number;
+  submitted_at: Date | null;
+  players: TeamRegistrationPlayer[];
+}
+
 export interface TeamResponse {
   id: string;
   game_id: string;
@@ -41,6 +61,9 @@ export interface TeamResponse {
   accepting_substitutes: boolean;
   created_at: Date;
   members?: TeamMemberResponse[];
+  registration?: TeamRegistrationInfo | null;
+  my_pending_approval_id?: string | null;
+  can_cancel_registration_request?: boolean;
 }
 
 export interface PrivacySafeTeamMember {
@@ -239,6 +262,95 @@ export const toTeamResponse = (
   const isOwner = (callerIdStr && team.captainId === callerIdStr) || (team as any).isOwnerView;
   const pendingCount = (team as any).pendingJoinRequestsCount ?? (team as any)._count?.joinRequests;
 
+  const isMember = callerIdStr
+    ? team.members?.some((m) => m.userId === callerIdStr)
+    : false;
+
+  let registrationObj: TeamRegistrationInfo | null | undefined = undefined;
+  let myPendingApprovalId: string | null | undefined = undefined;
+  let canCancelRegistrationRequest: boolean | undefined = undefined;
+
+  if (isMember) {
+    if ((team as any).registration !== undefined) {
+      registrationObj = (team as any).registration;
+      myPendingApprovalId = (team as any).my_pending_approval_id ?? null;
+      canCancelRegistrationRequest = (team as any).can_cancel_registration_request ?? false;
+    } else {
+      const canCancel = Boolean(
+        isOwner &&
+          ((team as any).registrationState === 'PENDING_PLAYER_APPROVAL' ||
+            (team as any).registrationState === 'ROSTER_CHANGE_REQUIRED'),
+      );
+      canCancelRegistrationRequest = canCancel;
+
+      const activeSub =
+        (team as any).registrationSubmissions?.find((s: any) => s.status === 'ACTIVE') ??
+        (team as any).activeSubmission;
+
+      const requireApproval = (team as any).tournament?.requirePlayerApproval ?? true;
+
+      if (activeSub) {
+        const approvedCount =
+          activeSub.approvals?.filter((a: any) => a.status === 'APPROVED').length ?? 0;
+        const myApp = activeSub.approvals?.find(
+          (a: any) => a.userId === callerIdStr && a.status === 'PENDING',
+        );
+        myPendingApprovalId = myApp ? myApp.id : null;
+
+        const players: TeamRegistrationPlayer[] = (team.members ?? []).map((m: any) => {
+          const isPlaying =
+            activeSub.playingUserIds?.includes(m.userId) &&
+            m.role !== 'SUBSTITUTE' &&
+            m.role !== 'MANAGER';
+          const approval = activeSub.approvals?.find((a: any) => a.userId === m.userId);
+          const approvalStatus = approval ? approval.status : 'NOT_REQUIRED';
+          return {
+            user_id: m.userId,
+            name: m.user?.name || 'Player',
+            avatar: m.user?.profilePic || null,
+            role: m.role,
+            is_playing: Boolean(isPlaying),
+            approval_status: approvalStatus,
+          };
+        });
+
+        registrationObj = {
+          submission_id: activeSub.id,
+          state: (team as any).registrationState ?? 'FORMING',
+          roster_version: activeSub.rosterVersion ?? (team as any).rosterVersion ?? 1,
+          require_player_approval: requireApproval,
+          required_count: activeSub.approvals?.length ?? 0,
+          approved_count: approvedCount,
+          submitted_at: activeSub.createdAt ?? null,
+          players,
+        };
+      } else {
+        const playingMembers = (team.members ?? []).filter(
+          (m) => m.role !== 'SUBSTITUTE' && m.role !== 'MANAGER',
+        );
+        const players: TeamRegistrationPlayer[] = (team.members ?? []).map((m: any) => ({
+          user_id: m.userId,
+          name: m.user?.name || 'Player',
+          avatar: m.user?.profilePic || null,
+          role: m.role,
+          is_playing: m.role !== 'SUBSTITUTE' && m.role !== 'MANAGER',
+          approval_status: 'NOT_REQUIRED',
+        }));
+
+        registrationObj = {
+          submission_id: null,
+          state: (team as any).registrationState ?? 'FORMING',
+          roster_version: (team as any).rosterVersion ?? 1,
+          require_player_approval: requireApproval,
+          required_count: playingMembers.length,
+          approved_count: 0,
+          submitted_at: null,
+          players,
+        };
+      }
+    }
+  }
+
   return {
     id: team.id,
     game_id: team.gameId,
@@ -258,6 +370,13 @@ export const toTeamResponse = (
     accepting_substitutes: team.acceptingSubstitutes ?? true,
     created_at: team.createdAt,
     ...(team.members ? { members: team.members.map((member) => toTeamMemberResponse(member, team.gameId)) } : {}),
+    ...(isMember
+      ? {
+          registration: registrationObj,
+          my_pending_approval_id: myPendingApprovalId ?? null,
+          can_cancel_registration_request: canCancelRegistrationRequest ?? false,
+        }
+      : {}),
   };
 };
 

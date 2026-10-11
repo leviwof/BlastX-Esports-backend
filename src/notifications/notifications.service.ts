@@ -93,6 +93,38 @@ export interface TeamJoinRejectedPayload {
   requestId?: string;
 }
 
+export interface RegistrationApprovalRequestedPayload {
+  approvalId: string;
+  approverUserId: string;
+  tournamentId: string;
+  tournamentTitle: string;
+  teamId: string;
+  teamName: string;
+  ownerName: string;
+}
+
+export interface RegistrationApprovalRespondedPayload {
+  ownerUserId: string;
+  tournamentId: string;
+  teamId: string;
+  action: 'approval_approved' | 'approval_declined';
+  teamName?: string;
+}
+
+export interface RegistrationRosterChangeRequiredPayload {
+  ownerUserId: string;
+  tournamentId: string;
+  teamId: string;
+  teamName?: string;
+}
+
+export interface RegistrationInvalidatedPayload {
+  userIds: string[];
+  tournamentId: string;
+  teamId: string;
+  teamName?: string;
+}
+
 export interface BroadcastNotificationInput {
   title: string;
   body: string;
@@ -625,6 +657,67 @@ export class NotificationsService implements OnModuleInit {
       data: {
         tournamentId: payload.tournamentId ?? '',
         action: 'join_rejected',
+      },
+    });
+  }
+
+  // --- Section 3: Player Participation Approvals & Roster Events ---
+  @OnEvent('registration.approval_requested')
+  async handleRegistrationApprovalRequested(payload: RegistrationApprovalRequestedPayload): Promise<void> {
+    await this.sendToUser(payload.approverUserId, {
+      type: 'registration_approval',
+      title: 'Approve your participation',
+      body: `${payload.ownerName} registered ${payload.teamName} for ${payload.tournamentTitle}. Tap to approve.`,
+      data: {
+        approvalId: payload.approvalId,
+        tournamentId: payload.tournamentId,
+        teamId: payload.teamId,
+        action: 'registration_approval',
+      },
+    });
+  }
+
+  @OnEvent('registration.approval_responded')
+  async handleRegistrationApprovalResponded(payload: RegistrationApprovalRespondedPayload): Promise<void> {
+    const isApproved = payload.action === 'approval_approved';
+    await this.sendToUser(payload.ownerUserId, {
+      type: 'registration_approval_response',
+      title: isApproved ? 'Participation Approved' : 'Participation Declined',
+      body: isApproved
+        ? 'A player has approved their participation in your tournament registration.'
+        : 'A player has declined their participation in your tournament registration.',
+      data: {
+        tournamentId: payload.tournamentId,
+        teamId: payload.teamId,
+        action: payload.action,
+      },
+    });
+  }
+
+  @OnEvent('registration.roster_change_required')
+  async handleRegistrationRosterChangeRequired(payload: RegistrationRosterChangeRequiredPayload): Promise<void> {
+    await this.sendToUser(payload.ownerUserId, {
+      type: 'roster_change_required',
+      title: 'Roster Change Required',
+      body: `A player declined participation in ${payload.teamName || 'your team'}. Please update your roster or request approval again.`,
+      data: {
+        tournamentId: payload.tournamentId,
+        teamId: payload.teamId,
+        action: 'roster_change_required',
+      },
+    });
+  }
+
+  @OnEvent('registration.invalidated')
+  async handleRegistrationInvalidated(payload: RegistrationInvalidatedPayload): Promise<void> {
+    await this.sendToUsers(payload.userIds, {
+      type: 'registration_invalidated',
+      title: 'Registration Request Invalidated',
+      body: `The roster for ${payload.teamName || 'your team'} was changed and the previous approval request is no longer valid.`,
+      data: {
+        tournamentId: payload.tournamentId,
+        teamId: payload.teamId,
+        action: 'registration_invalidated',
       },
     });
   }

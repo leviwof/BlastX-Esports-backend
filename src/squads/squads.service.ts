@@ -21,6 +21,7 @@ import { JoinSquadDto } from './dto/join-squad.dto';
 import { SwapSquadMembersDto } from './dto/swap-squad-members.dto';
 import { TransferSquadLeaderDto } from './dto/transfer-squad-leader.dto';
 import { UpdateSquadMemberRoleDto } from './dto/update-squad-member-role.dto';
+import { handleRosterChange } from '../teams/roster-change.helper';
 
 const squadInclude = {
   leader: { select: { id: true, name: true, isActive: true } },
@@ -1074,9 +1075,29 @@ export class SquadsService {
             });
           }
 
+          const targetTeam = await tx.team.findUnique({
+            where: { id: invitation.teamId },
+            include: { members: true },
+          });
+          const beforeMain = targetTeam
+            ? targetTeam.members
+                .filter((m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER)
+                .map((m) => m.userId)
+            : [];
+          const beforeCaptainId = targetTeam?.captainId ?? '';
+
           await tx.teamMember.create({
             data: { teamId: invitation.teamId, userId, role: TeamMemberRole.PLAYER },
           });
+
+          await handleRosterChange(
+            tx,
+            invitation.teamId,
+            { captainId: beforeCaptainId, mainUserIds: beforeMain },
+            this.events,
+            userId,
+          );
+
           await tx.tournamentInvitation.update({
             where: { id: invitationId },
             data: { status: TournamentInvitationStatus.ACCEPTED },

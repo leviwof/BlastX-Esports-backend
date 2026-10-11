@@ -6,6 +6,7 @@ import {
   HttpException,
   HttpStatus,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -42,13 +43,16 @@ import { TournamentBracketResponse, TournamentStage, StageTeam } from './tournam
 import { randomBytes } from 'crypto';
 import { SquadsService } from '../squads/squads.service';
 
+import { RegistrationService } from './registration.service';
+
 @Injectable()
 export class TournamentsService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
     private readonly config: ConfigService,
-    private readonly squadsService?: SquadsService,
+    @Optional() private readonly squadsService?: SquadsService,
+    @Optional() private readonly registrationService?: RegistrationService,
   ) {}
 
   async onModuleInit() {
@@ -234,6 +238,7 @@ export class TournamentsService implements OnModuleInit {
         pointsSystem: dto.points_system || null,
         schedule: dto.schedule || null,
         announcements: dto.announcements || null,
+        requirePlayerApproval: dto.require_player_approval ?? dto.requirePlayerApproval ?? true,
         createdBy: adminId,
       },
     });
@@ -268,6 +273,9 @@ export class TournamentsService implements OnModuleInit {
     if (dto.schedule !== undefined) data.schedule = dto.schedule;
     if (dto.announcements !== undefined) data.announcements = dto.announcements;
     if (dto.section !== undefined) data.section = dto.section;
+    if (dto.require_player_approval !== undefined || dto.requirePlayerApproval !== undefined) {
+      data.requirePlayerApproval = dto.require_player_approval ?? dto.requirePlayerApproval;
+    }
 
     return this.prisma.tournament.update({
       where: { id: tournamentId },
@@ -538,6 +546,10 @@ export class TournamentsService implements OnModuleInit {
   }
 
   async registerUserOrTeam(userId: string, tournamentId: string, dto: RegisterTournamentDto): Promise<TournamentRegistration> {
+    if (this.registrationService) {
+      return this.registrationService.register(userId, tournamentId, dto);
+    }
+
     const tournament = await this.getTournamentEntity(tournamentId);
 
     if (tournament.status !== TournamentStatus.LIVE) {
@@ -1139,10 +1151,12 @@ export class TournamentsService implements OnModuleInit {
         : mainCount === 4;
 
     const registrationState = (team.registrationState as string) ?? 'FORMING';
-    const isForming = registrationState === 'FORMING';
+    const isAllowedState =
+      registrationState === 'FORMING' ||
+      registrationState === 'ROSTER_CHANGE_REQUIRED';
     const isLive = tournament.status === TournamentStatus.LIVE;
 
-    return Boolean(isLeaderOrManager && meetsPlayerCount && isForming && isLive);
+    return Boolean(isLeaderOrManager && meetsPlayerCount && isAllowedState && isLive);
   }
 
   async getMyTeamForTournament(userId: string, tournamentId: string) {
@@ -1155,6 +1169,11 @@ export class TournamentsService implements OnModuleInit {
       },
       include: {
         captain: true,
+        tournament: { select: { requirePlayerApproval: true } },
+        registrationSubmissions: {
+          where: { status: 'ACTIVE' },
+          include: { approvals: true },
+        },
         members: {
           include: {
             user: { include: { gameProfiles: true } },
@@ -1178,7 +1197,7 @@ export class TournamentsService implements OnModuleInit {
       const canRegister = this.computeCanRegister(formingTeam, userId, tournament);
 
       return {
-        ...toTeamResponse(formingTeam as any),
+        ...toTeamResponse(formingTeam as any, userId),
         tournament_id: tournamentId,
         is_registered: isRegistered,
         slot_number: registration?.slotNumber ?? null,
@@ -1249,6 +1268,11 @@ export class TournamentsService implements OnModuleInit {
         team: {
           include: {
             captain: true,
+            tournament: { select: { requirePlayerApproval: true } },
+            registrationSubmissions: {
+              where: { status: 'ACTIVE' },
+              include: { approvals: true },
+            },
             members: {
               include: {
                 user: {
@@ -1268,7 +1292,7 @@ export class TournamentsService implements OnModuleInit {
     const canRegister = this.computeCanRegister(registration.team, userId, tournament);
 
     return {
-      ...toTeamResponse(registration.team as any),
+      ...toTeamResponse(registration.team as any, userId),
       tournament_id: tournamentId,
       slot_number: registration.slotNumber,
       registration_status: registration.status,

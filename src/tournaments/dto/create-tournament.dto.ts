@@ -149,4 +149,12 @@ export class CreateTournamentDto {
   @IsOptional()
   @IsBoolean()
   exact_rounds?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  require_player_approval?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  requirePlayerApproval?: boolean;
 }

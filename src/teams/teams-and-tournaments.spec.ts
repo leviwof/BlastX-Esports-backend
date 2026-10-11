@@ -14,11 +14,24 @@ import { BadRequestException, ForbiddenException, NotFoundException } from '@nes
 import { TeamsService } from './teams.service';
 import { TournamentsService } from '../tournaments/tournaments.service';
 import { SquadsService } from '../squads/squads.service';
-import { TeamMemberRole, RegistrationStatus, TournamentStatus, TeamMode, SquadRole, TeamRegistrationState, TeamJoinRequestStatus } from '@prisma/client';
+import { RegistrationService } from '../tournaments/registration.service';
+import {
+  TeamMemberRole,
+  RegistrationStatus,
+  TournamentStatus,
+  TeamMode,
+  SquadRole,
+  TeamRegistrationState,
+  TeamJoinRequestStatus,
+  OwnerRole,
+  RegistrationSubmissionStatus,
+  RegistrationApprovalStatus,
+} from '@prisma/client';
 
 describe('Teams & Tournaments Features', () => {
   let teamsService: TeamsService;
   let tournamentsService: TournamentsService;
+  let registrationService: RegistrationService;
   let mockPrisma: any;
   let mockEventEmitter: any;
   let mockConfig: any;
@@ -90,6 +103,27 @@ describe('Teams & Tournaments Features', () => {
         update: jest.fn(),
         count: jest.fn().mockResolvedValue(0),
       },
+      registrationSubmission: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+        findMany: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+        updateMany: jest.fn(),
+      },
+      registrationApproval: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+        findMany: jest.fn(),
+        create: jest.fn(),
+        createMany: jest.fn(),
+        update: jest.fn(),
+        updateMany: jest.fn(),
+      },
+      registrationEvent: {
+        create: jest.fn().mockResolvedValue({}),
+        findMany: jest.fn(),
+      },
       $transaction: jest.fn(async (cbOrArr, options) => {
         if (typeof cbOrArr === 'function') {
           return cbOrArr(mockPrisma);
@@ -105,6 +139,7 @@ describe('Teams & Tournaments Features', () => {
       syncTeamToSquad: jest.fn().mockResolvedValue(undefined),
     };
 
+    registrationService = new RegistrationService(mockPrisma, mockEventEmitter, mockConfig);
     teamsService = new TeamsService(mockPrisma, mockSquadsService as any, mockEventEmitter);
     tournamentsService = new TournamentsService(mockPrisma, mockEventEmitter, mockConfig);
   });
@@ -1235,6 +1270,7 @@ describe('Teams & Tournaments Features', () => {
         const tx = {
           ...mockPrisma,
           team: {
+            ...mockPrisma.team,
             findUnique: jest.fn().mockImplementation(() =>
               Promise.resolve({
                 id: 'team-1',
@@ -1283,6 +1319,747 @@ describe('Teams & Tournaments Features', () => {
       await expect(
         teamsService.approveJoinRequest('user-cap', 'team-1', 'req-2'),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('Section 3: Player Participation Approvals & Roster Management', () => {
+    it('1. SQUAD with Leader in Playing 4 -> 3 approvals; Manager outside -> 4 approvals; DUO -> 1', async () => {
+      // 1a. SQUAD with Leader
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-sq',
+        title: 'Championship',
+        status: TournamentStatus.LIVE,
+        entryFee: 0,
+        teamMode: TeamMode.SQUAD,
+        gameId: 'game-1',
+        requirePlayerApproval: true,
+      });
+      mockPrisma.team.findUnique.mockResolvedValueOnce({
+        id: 'team-sq1',
+        name: 'Squad 1',
+        captainId: 'u-cap',
+        ownerRole: OwnerRole.LEADER,
+        gameId: 'game-1',
+        registrationState: TeamRegistrationState.FORMING,
+        rosterVersion: 1,
+        members: [
+          { userId: 'u-cap', role: TeamMemberRole.CAPTAIN },
+          { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p2', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p3', role: TeamMemberRole.PLAYER },
+        ],
+      });
+      mockPrisma.gameProfile.findMany.mockResolvedValue([
+        { userId: 'u-cap' }, { userId: 'u-p1' }, { userId: 'u-p2' }, { userId: 'u-p3' }
+      ]);
+      mockPrisma.tournamentRegistration.findFirst.mockResolvedValue(null);
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.registrationSubmission.create.mockResolvedValue({
+        id: 'sub-sq1',
+        createdAt: new Date(),
+      });
+      mockPrisma.registrationApproval.findMany.mockResolvedValue([
+        { id: 'app-1', userId: 'u-p1' },
+        { id: 'app-2', userId: 'u-p2' },
+        { id: 'app-3', userId: 'u-p3' },
+      ]);
+
+      const resSquadLeader = await registrationService.register('u-cap', 'tour-sq', { team_id: 'team-sq1' });
+      expect(resSquadLeader.status).toBe('PENDING_APPROVAL');
+      expect(resSquadLeader.approvals_required).toBe(3);
+      expect(mockPrisma.registrationApproval.createMany).toHaveBeenCalledWith({
+        data: expect.arrayContaining([
+          expect.objectContaining({ userId: 'u-p1' }),
+          expect.objectContaining({ userId: 'u-p2' }),
+          expect.objectContaining({ userId: 'u-p3' }),
+        ]),
+      });
+
+      // 1b. SQUAD with Manager
+      mockPrisma.team.findUnique.mockResolvedValueOnce({
+        id: 'team-sq2',
+        name: 'Squad 2',
+        captainId: 'u-mgr',
+        ownerRole: OwnerRole.MANAGER,
+        gameId: 'game-1',
+        registrationState: TeamRegistrationState.FORMING,
+        rosterVersion: 1,
+        members: [
+          { userId: 'u-mgr', role: TeamMemberRole.MANAGER },
+          { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p2', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p3', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p4', role: TeamMemberRole.PLAYER },
+        ],
+      });
+      mockPrisma.gameProfile.findMany.mockResolvedValue([
+        { userId: 'u-p1' }, { userId: 'u-p2' }, { userId: 'u-p3' }, { userId: 'u-p4' }
+      ]);
+      mockPrisma.registrationApproval.findMany.mockResolvedValue([
+        { id: 'app-1', userId: 'u-p1' },
+        { id: 'app-2', userId: 'u-p2' },
+        { id: 'app-3', userId: 'u-p3' },
+        { id: 'app-4', userId: 'u-p4' },
+      ]);
+      const resSquadManager = await registrationService.register('u-mgr', 'tour-sq', { team_id: 'team-sq2' });
+      expect(resSquadManager.approvals_required).toBe(4);
+
+      // 1c. DUO with Leader
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-duo',
+        title: 'Duo Cup',
+        status: TournamentStatus.LIVE,
+        entryFee: 0,
+        teamMode: TeamMode.DUO,
+        gameId: 'game-1',
+        requirePlayerApproval: true,
+      });
+      mockPrisma.team.findUnique.mockResolvedValueOnce({
+        id: 'team-duo',
+        name: 'Duo Team',
+        captainId: 'u-cap',
+        ownerRole: OwnerRole.LEADER,
+        gameId: 'game-1',
+        registrationState: TeamRegistrationState.FORMING,
+        rosterVersion: 1,
+        members: [
+          { userId: 'u-cap', role: TeamMemberRole.CAPTAIN },
+          { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+        ],
+      });
+      mockPrisma.gameProfile.findMany.mockResolvedValue([
+        { userId: 'u-cap' }, { userId: 'u-p1' }
+      ]);
+      mockPrisma.registrationApproval.findMany.mockResolvedValue([
+        { id: 'app-1', userId: 'u-p1' },
+      ]);
+      const resDuo = await registrationService.register('u-cap', 'tour-duo', { team_id: 'team-duo' });
+      expect(resDuo.approvals_required).toBe(1);
+    });
+
+    it('2. register twice is idempotent (one submission)', async () => {
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        title: 'Championship',
+        status: TournamentStatus.LIVE,
+        entryFee: 0,
+        teamMode: TeamMode.SQUAD,
+        gameId: 'game-1',
+        requirePlayerApproval: true,
+      });
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-1',
+        name: 'Alpha',
+        captainId: 'u-cap',
+        ownerRole: OwnerRole.LEADER,
+        gameId: 'game-1',
+        registrationState: TeamRegistrationState.PENDING_PLAYER_APPROVAL,
+        rosterVersion: 1,
+        members: [
+          { userId: 'u-cap', role: TeamMemberRole.CAPTAIN },
+          { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p2', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p3', role: TeamMemberRole.PLAYER },
+        ],
+      });
+      mockPrisma.gameProfile.findMany.mockResolvedValue([
+        { userId: 'u-cap' }, { userId: 'u-p1' }, { userId: 'u-p2' }, { userId: 'u-p3' }
+      ]);
+      mockPrisma.tournamentRegistration.findFirst.mockResolvedValue(null);
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.registrationSubmission.findFirst.mockResolvedValue({
+        id: 'sub-existing',
+        rosterVersion: 1,
+        status: RegistrationSubmissionStatus.ACTIVE,
+        createdAt: new Date(),
+        approvals: [
+          { id: 'app-1', status: RegistrationApprovalStatus.APPROVED },
+          { id: 'app-2', status: RegistrationApprovalStatus.PENDING },
+          { id: 'app-3', status: RegistrationApprovalStatus.PENDING },
+        ],
+      });
+
+      const res = await registrationService.register('u-cap', 'tour-1', { team_id: 'team-1' });
+      expect(res.id).toBe('sub-existing');
+      expect(res.registration_state).toBe(TeamRegistrationState.PENDING_PLAYER_APPROVAL);
+      expect(res.approvals_required).toBe(3);
+      expect(res.approvals_approved).toBe(1);
+      expect(mockPrisma.registrationSubmission.create).not.toHaveBeenCalled();
+    });
+
+    it('3. all approve -> CONFIRMED, slot number set, events fired once, registeredCount +1 once', async () => {
+      const submission = {
+        id: 'sub-1',
+        rosterVersion: 1,
+        status: RegistrationSubmissionStatus.ACTIVE,
+        playingUserIds: ['u-cap', 'u-p1'],
+        tournament: { id: 'tour-1', title: 'Tour 1', status: TournamentStatus.LIVE, maxSlots: 10, registeredCount: 4, entryFee: 0, teamMode: TeamMode.DUO },
+        team: {
+          id: 'team-1',
+          name: 'Duo 1',
+          captainId: 'u-cap',
+          rosterVersion: 1,
+          registrationState: TeamRegistrationState.PENDING_PLAYER_APPROVAL,
+          members: [
+            { userId: 'u-cap', role: TeamMemberRole.CAPTAIN },
+            { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+          ],
+        },
+        approvals: [
+          { id: 'app-1', userId: 'u-p1', status: RegistrationApprovalStatus.PENDING },
+        ],
+      };
+
+      mockPrisma.registrationApproval.findUnique.mockResolvedValue({
+        id: 'app-1',
+        userId: 'u-p1',
+        status: RegistrationApprovalStatus.PENDING,
+        submission,
+      });
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        title: 'Tour 1',
+        status: TournamentStatus.LIVE,
+        maxSlots: 10,
+        registeredCount: 5,
+        entryFee: 0,
+        teamMode: TeamMode.DUO,
+      });
+      mockPrisma.team.findUnique.mockResolvedValue(submission.team);
+      mockPrisma.gameProfile.findMany.mockResolvedValue([
+        { userId: 'u-cap' },
+        { userId: 'u-p1' },
+      ]);
+      mockPrisma.tournamentRegistration.findFirst.mockResolvedValue(null);
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.tournament.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.tournamentRegistration.create.mockResolvedValue({
+        id: 'reg-1',
+        slotNumber: 5,
+        status: RegistrationStatus.CONFIRMED,
+      });
+
+      const res = await registrationService.approve('u-p1', 'app-1');
+
+      expect(res.status).toBe('APPROVED');
+      expect(res.all_approved).toBe(true);
+      expect(res.registration_state).toBe('CONFIRMED');
+      expect(res.slot_number).toBe(5);
+      expect(mockPrisma.team.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { registrationState: TeamRegistrationState.CONFIRMED } }),
+      );
+      expect(mockPrisma.registrationSubmission.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: RegistrationSubmissionStatus.COMPLETED }) }),
+      );
+      expect(mockEventEmitter.emit).toHaveBeenCalledWith(
+        'tournament.slot_confirmed',
+        expect.objectContaining({ slotNumber: 5 }),
+      );
+      expect(mockEventEmitter.emit).toHaveBeenCalledWith(
+        'registration.confirmed',
+        expect.objectContaining({ slotNumber: 5 }),
+      );
+    });
+
+    it('4. a decline -> ROSTER_CHANGE_REQUIRED and later approvals are blocked', async () => {
+      const submission = {
+        id: 'sub-1',
+        rosterVersion: 1,
+        status: RegistrationSubmissionStatus.ACTIVE,
+        playingUserIds: ['u-cap', 'u-p1', 'u-p2', 'u-p3'],
+        tournament: { id: 'tour-1', status: TournamentStatus.LIVE },
+        team: {
+          id: 'team-1',
+          name: 'Squad 1',
+          captainId: 'u-cap',
+          rosterVersion: 1,
+          registrationState: TeamRegistrationState.PENDING_PLAYER_APPROVAL,
+          members: [
+            { userId: 'u-cap', role: TeamMemberRole.CAPTAIN },
+            { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+            { userId: 'u-p2', role: TeamMemberRole.PLAYER },
+            { userId: 'u-p3', role: TeamMemberRole.PLAYER },
+          ],
+        },
+      };
+
+      mockPrisma.registrationApproval.findUnique.mockResolvedValueOnce({
+        id: 'app-1',
+        userId: 'u-p1',
+        status: RegistrationApprovalStatus.PENDING,
+        submission,
+      });
+
+      const declineRes = await registrationService.decline('u-p1', 'app-1');
+      expect(declineRes.status).toBe('DECLINED');
+      expect(declineRes.registration_state).toBe(TeamRegistrationState.ROSTER_CHANGE_REQUIRED);
+      expect(mockPrisma.team.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { registrationState: TeamRegistrationState.ROSTER_CHANGE_REQUIRED } }),
+      );
+      expect(mockEventEmitter.emit).toHaveBeenCalledWith(
+        'registration.roster_change_required',
+        expect.objectContaining({ ownerUserId: 'u-cap' }),
+      );
+
+      // Now later approver tries to approve
+      mockPrisma.registrationApproval.findUnique.mockResolvedValueOnce({
+        id: 'app-2',
+        userId: 'u-p2',
+        status: RegistrationApprovalStatus.PENDING,
+        submission: {
+          ...submission,
+          team: {
+            ...submission.team,
+            registrationState: TeamRegistrationState.ROSTER_CHANGE_REQUIRED,
+          },
+        },
+      });
+
+      await expect(
+        registrationService.approve('u-p2', 'app-2'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('5. remove/swap/transfer while pending -> submission SUPERSEDED, roster_version +1, state FORMING, approvers notified; old approval blocked', async () => {
+      let members = [
+        { userId: 'u-cap', role: TeamMemberRole.CAPTAIN },
+        { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+        { userId: 'u-p2', role: TeamMemberRole.PLAYER },
+        { userId: 'u-p3', role: TeamMemberRole.PLAYER },
+      ];
+      mockPrisma.team.findUnique.mockImplementation(() =>
+        Promise.resolve({
+          id: 'team-1',
+          name: 'Team 1',
+          captainId: 'u-cap',
+          tournamentId: 'tour-1',
+          rosterVersion: 1,
+          registrationState: TeamRegistrationState.PENDING_PLAYER_APPROVAL,
+          members: [...members],
+        }),
+      );
+      mockPrisma.teamMember.delete.mockImplementation(({ where }: any) => {
+        members = members.filter((m) => m.userId !== where.unique_team_user.userId);
+        return Promise.resolve({});
+      });
+      mockPrisma.registrationSubmission.findFirst.mockResolvedValue({
+        id: 'sub-1',
+        status: RegistrationSubmissionStatus.ACTIVE,
+        approvals: [
+          { userId: 'u-p1', status: RegistrationApprovalStatus.PENDING },
+          { userId: 'u-p2', status: RegistrationApprovalStatus.PENDING },
+          { userId: 'u-p3', status: RegistrationApprovalStatus.PENDING },
+        ],
+      });
+
+      const removeRes = await teamsService.removeMember('u-cap', 'team-1', 'u-p3');
+      expect(removeRes.message).toBeDefined();
+      expect(mockPrisma.registrationSubmission.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'sub-1' },
+          data: { status: RegistrationSubmissionStatus.SUPERSEDED },
+        }),
+      );
+      expect(mockPrisma.team.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            rosterVersion: 2,
+            registrationState: TeamRegistrationState.FORMING,
+          }),
+        }),
+      );
+      expect(mockEventEmitter.emit).toHaveBeenCalledWith(
+        'registration.invalidated',
+        expect.objectContaining({
+          userIds: expect.arrayContaining(['u-p1', 'u-p2', 'u-p3', 'u-cap']),
+        }),
+      );
+
+      // Now approve with old approval should fail with ROSTER_VERSION_MISMATCH
+      mockPrisma.registrationApproval.findUnique.mockResolvedValue({
+        id: 'app-1',
+        userId: 'u-p1',
+        status: RegistrationApprovalStatus.PENDING,
+        submission: {
+          id: 'sub-1',
+          rosterVersion: 1,
+          status: RegistrationSubmissionStatus.SUPERSEDED,
+          playingUserIds: ['u-cap', 'u-p1', 'u-p2', 'u-p3'],
+          team: {
+            id: 'team-1',
+            rosterVersion: 2,
+            registrationState: TeamRegistrationState.FORMING,
+            members: [
+              { userId: 'u-cap', role: TeamMemberRole.CAPTAIN },
+              { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+              { userId: 'u-p2', role: TeamMemberRole.PLAYER },
+            ],
+          },
+          tournament: { id: 'tour-1', status: TournamentStatus.LIVE },
+        },
+      });
+
+      await expect(
+        registrationService.approve('u-p1', 'app-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('6. substitute joining/leaving does not invalidate anything', async () => {
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-1',
+        name: 'Team 1',
+        captainId: 'u-cap',
+        tournamentId: 'tour-1',
+        rosterVersion: 1,
+        registrationState: TeamRegistrationState.PENDING_PLAYER_APPROVAL,
+        members: [
+          { userId: 'u-cap', role: TeamMemberRole.CAPTAIN },
+          { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p2', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p3', role: TeamMemberRole.PLAYER },
+          { userId: 'u-sub', role: TeamMemberRole.SUBSTITUTE },
+        ],
+      });
+
+      await teamsService.leaveTeam('u-sub', 'team-1');
+      expect(mockPrisma.registrationSubmission.update).not.toHaveBeenCalled();
+      expect(mockEventEmitter.emit).not.toHaveBeenCalledWith('registration.invalidated', expect.anything());
+    });
+
+    it('7. a non-approver gets NOT_APPROVER (403)', async () => {
+      mockPrisma.registrationApproval.findUnique.mockResolvedValue({
+        id: 'app-1',
+        userId: 'u-p1',
+        status: RegistrationApprovalStatus.PENDING,
+        submission: {
+          team: { members: [] },
+          tournament: {},
+          playingUserIds: [],
+        },
+      });
+
+      await expect(
+        registrationService.approve('u-intruder', 'app-1'),
+      ).rejects.toThrow(ForbiddenException);
+
+      await expect(
+        registrationService.decline('u-intruder', 'app-1'),
+      ).rejects.toThrow(ForbiddenException);
+
+      await expect(
+        registrationService.getApprovalById('u-intruder', 'app-1'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('8. capacity full on last approval -> WAITLISTED; concurrent approvals for last slot -> exactly one CONFIRMED', async () => {
+      const submission = {
+        id: 'sub-1',
+        rosterVersion: 1,
+        status: RegistrationSubmissionStatus.ACTIVE,
+        playingUserIds: ['u-cap', 'u-p1'],
+        tournament: { id: 'tour-1', title: 'Tour 1', status: TournamentStatus.LIVE, maxSlots: 10, registeredCount: 10, entryFee: 0, teamMode: TeamMode.DUO },
+        team: {
+          id: 'team-1',
+          name: 'Duo 1',
+          captainId: 'u-cap',
+          rosterVersion: 1,
+          registrationState: TeamRegistrationState.PENDING_PLAYER_APPROVAL,
+          members: [
+            { userId: 'u-cap', role: TeamMemberRole.CAPTAIN },
+            { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+          ],
+        },
+        approvals: [
+          { id: 'app-1', userId: 'u-p1', status: RegistrationApprovalStatus.PENDING },
+        ],
+      };
+
+      mockPrisma.registrationApproval.findUnique.mockResolvedValue({
+        id: 'app-1',
+        userId: 'u-p1',
+        status: RegistrationApprovalStatus.PENDING,
+        submission,
+      });
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        title: 'Tour 1',
+        status: TournamentStatus.LIVE,
+        maxSlots: 10,
+        registeredCount: 10,
+        entryFee: 0,
+        teamMode: TeamMode.DUO,
+      });
+      mockPrisma.team.findUnique.mockResolvedValue(submission.team);
+      mockPrisma.gameProfile.findMany.mockResolvedValue([
+        { userId: 'u-cap' },
+        { userId: 'u-p1' },
+      ]);
+      mockPrisma.tournamentRegistration.findFirst.mockResolvedValue(null);
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.tournament.updateMany.mockResolvedValue({ count: 0 });
+
+      const res = await registrationService.approve('u-p1', 'app-1');
+
+      expect(res.registration_state).toBe('WAITLISTED');
+      expect(res.slot_number).toBeNull();
+      expect(mockPrisma.team.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { registrationState: TeamRegistrationState.WAITLISTED } }),
+      );
+      expect(mockEventEmitter.emit).toHaveBeenCalledWith(
+        'tournament.waitlisted',
+        expect.objectContaining({ tournamentId: 'tour-1' }),
+      );
+    });
+
+    it('9. require_player_approval=false -> immediate CONFIRMED', async () => {
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        title: 'Instant Tour',
+        status: TournamentStatus.LIVE,
+        entryFee: 0,
+        teamMode: TeamMode.DUO,
+        gameId: 'game-1',
+        requirePlayerApproval: false,
+        maxSlots: 10,
+        registeredCount: 2,
+      });
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-1',
+        name: 'Duo Instant',
+        captainId: 'u-cap',
+        ownerRole: OwnerRole.LEADER,
+        gameId: 'game-1',
+        registrationState: TeamRegistrationState.FORMING,
+        rosterVersion: 1,
+        members: [
+          { userId: 'u-cap', role: TeamMemberRole.CAPTAIN },
+          { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+        ],
+      });
+      mockPrisma.gameProfile.findMany.mockResolvedValue([
+        { userId: 'u-cap' }, { userId: 'u-p1' }
+      ]);
+      mockPrisma.tournamentRegistration.findFirst.mockResolvedValue(null);
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.tournament.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.tournamentRegistration.create.mockResolvedValue({
+        id: 'reg-instant',
+        slotNumber: 2,
+        status: RegistrationStatus.CONFIRMED,
+      });
+
+      const res = await registrationService.register('u-cap', 'tour-1', { team_id: 'team-1' });
+
+      expect(res.registration_state).toBe('CONFIRMED');
+      expect(res.slot_number).toBe(2);
+      expect(mockPrisma.registrationApproval.createMany).not.toHaveBeenCalled();
+    });
+
+    it('10. cancel-request works; ask again after decline works', async () => {
+      // 10a. Cancel request
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-1',
+        name: 'Team 1',
+        captainId: 'u-cap',
+        gameId: 'game-1',
+        registrationState: TeamRegistrationState.PENDING_PLAYER_APPROVAL,
+        rosterVersion: 1,
+        members: [{ userId: 'u-cap', role: TeamMemberRole.CAPTAIN }],
+      });
+      mockPrisma.registrationSubmission.findFirst.mockResolvedValue({
+        id: 'sub-1',
+        approvals: [{ userId: 'u-p1', status: RegistrationApprovalStatus.PENDING }],
+      });
+
+      const cancelRes = await registrationService.cancelRegistrationRequest('u-cap', 'tour-1', 'team-1');
+      expect(cancelRes.success).toBe(true);
+      expect(cancelRes.registration_state).toBe(TeamRegistrationState.FORMING);
+      expect(mockPrisma.registrationSubmission.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'sub-1' }, data: { status: RegistrationSubmissionStatus.CANCELLED } }),
+      );
+
+      // 10b. Ask again after decline (ROSTER_CHANGE_REQUIRED)
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-1',
+        title: 'Tour 1',
+        status: TournamentStatus.LIVE,
+        entryFee: 0,
+        teamMode: TeamMode.DUO,
+        gameId: 'game-1',
+        requirePlayerApproval: true,
+      });
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-1',
+        name: 'Team 1',
+        captainId: 'u-cap',
+        ownerRole: OwnerRole.LEADER,
+        gameId: 'game-1',
+        registrationState: TeamRegistrationState.ROSTER_CHANGE_REQUIRED,
+        rosterVersion: 1,
+        members: [
+          { userId: 'u-cap', role: TeamMemberRole.CAPTAIN },
+          { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+        ],
+      });
+      mockPrisma.gameProfile.findMany.mockResolvedValue([{ userId: 'u-cap' }, { userId: 'u-p1' }]);
+      mockPrisma.tournamentRegistration.findFirst.mockResolvedValue(null);
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.registrationSubmission.create.mockResolvedValue({
+        id: 'sub-2',
+        createdAt: new Date(),
+      });
+      mockPrisma.registrationApproval.findMany.mockResolvedValue([{ id: 'app-new', userId: 'u-p1' }]);
+
+      const askAgainRes = await registrationService.register('u-cap', 'tour-1', { team_id: 'team-1' });
+      expect(askAgainRes.status).toBe('PENDING_APPROVAL');
+      expect(askAgainRes.registration_state).toBe(TeamRegistrationState.PENDING_PLAYER_APPROVAL);
+    });
+
+    it('11. PUT playing-roster validations (LEADER_MUST_PLAY, MANAGER_CANNOT_PLAY, wrong count, substitute limit)', async () => {
+      // 11a. LEADER_MUST_PLAY
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-1',
+        captainId: 'u-cap',
+        ownerRole: OwnerRole.LEADER,
+        tournamentId: 'tour-1',
+        registrationState: TeamRegistrationState.FORMING,
+        acceptingSubstitutes: true,
+        members: [
+          { userId: 'u-cap', role: TeamMemberRole.CAPTAIN },
+          { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p2', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p3', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p4', role: TeamMemberRole.PLAYER },
+        ],
+        tournament: { teamMode: TeamMode.SQUAD },
+      });
+
+      await expect(
+        teamsService.updatePlayingRoster('u-cap', 'team-1', ['u-p1', 'u-p2', 'u-p3', 'u-p4']),
+      ).rejects.toThrow(BadRequestException);
+
+      // 11b. MANAGER_CANNOT_PLAY
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-2',
+        captainId: 'u-mgr',
+        ownerRole: OwnerRole.MANAGER,
+        tournamentId: 'tour-1',
+        registrationState: TeamRegistrationState.FORMING,
+        acceptingSubstitutes: true,
+        members: [
+          { userId: 'u-mgr', role: TeamMemberRole.MANAGER },
+          { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p2', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p3', role: TeamMemberRole.PLAYER },
+        ],
+        tournament: { teamMode: TeamMode.SQUAD },
+      });
+
+      await expect(
+        teamsService.updatePlayingRoster('u-mgr', 'team-2', ['u-mgr', 'u-p1', 'u-p2', 'u-p3']),
+      ).rejects.toThrow(BadRequestException);
+
+      // 11c. Wrong count
+      await expect(
+        teamsService.updatePlayingRoster('u-mgr', 'team-2', ['u-p1', 'u-p2']),
+      ).rejects.toThrow(BadRequestException);
+
+      // 11d. Locked when CONFIRMED
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-3',
+        captainId: 'u-cap',
+        ownerRole: OwnerRole.LEADER,
+        tournamentId: 'tour-1',
+        registrationState: TeamRegistrationState.CONFIRMED,
+        members: [{ userId: 'u-cap', role: TeamMemberRole.CAPTAIN }],
+        tournament: { teamMode: TeamMode.SQUAD },
+      });
+
+      await expect(
+        teamsService.updatePlayingRoster('u-cap', 'team-3', ['u-cap', 'u-p1', 'u-p2', 'u-p3']),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('12. SOLO and a paid tournament behave exactly as before', async () => {
+      // 12a. Paid tournament
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-paid',
+        status: TournamentStatus.LIVE,
+        entryFee: 100,
+        teamMode: TeamMode.SOLO,
+      });
+      mockConfig.get.mockReturnValue('false');
+
+      await expect(
+        registrationService.register('u-solo', 'tour-paid', {}),
+      ).rejects.toThrow(BadRequestException);
+
+      // 12b. SOLO tournament
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-solo',
+        title: 'Solo Cup',
+        status: TournamentStatus.LIVE,
+        entryFee: 0,
+        teamMode: TeamMode.SOLO,
+        gameId: 'game-1',
+        maxSlots: 10,
+        registeredCount: 0,
+      });
+      mockPrisma.tournamentRegistration.findFirst.mockResolvedValue(null);
+      mockPrisma.gameProfile.findUnique.mockResolvedValue({ id: 'gp-solo' });
+      mockPrisma.tournament.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.tournamentRegistration.create.mockResolvedValue({
+        id: 'reg-solo',
+        status: RegistrationStatus.CONFIRMED,
+        slotNumber: 1,
+      });
+
+      const resSolo = await registrationService.register('u-solo', 'tour-solo', {});
+      expect(resSolo.status).toBe(RegistrationStatus.CONFIRMED);
+      expect(resSolo.slotNumber).toBe(1);
+    });
+
+    it('13. every step writes registration_events rows', async () => {
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: 'tour-sq',
+        title: 'Championship',
+        status: TournamentStatus.LIVE,
+        entryFee: 0,
+        teamMode: TeamMode.SQUAD,
+        gameId: 'game-1',
+        requirePlayerApproval: true,
+      });
+      mockPrisma.team.findUnique.mockResolvedValue({
+        id: 'team-sq1',
+        name: 'Squad 1',
+        captainId: 'u-cap',
+        ownerRole: OwnerRole.LEADER,
+        gameId: 'game-1',
+        registrationState: TeamRegistrationState.FORMING,
+        rosterVersion: 1,
+        members: [
+          { userId: 'u-cap', role: TeamMemberRole.CAPTAIN },
+          { userId: 'u-p1', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p2', role: TeamMemberRole.PLAYER },
+          { userId: 'u-p3', role: TeamMemberRole.PLAYER },
+        ],
+      });
+      mockPrisma.gameProfile.findMany.mockResolvedValue([
+        { userId: 'u-cap' }, { userId: 'u-p1' }, { userId: 'u-p2' }, { userId: 'u-p3' }
+      ]);
+      mockPrisma.tournamentRegistration.findFirst.mockResolvedValue(null);
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.registrationSubmission.create.mockResolvedValue({ id: 'sub-sq1', createdAt: new Date() });
+      mockPrisma.registrationApproval.findMany.mockResolvedValue([
+        { id: 'app-1', userId: 'u-p1' },
+      ]);
+
+      await registrationService.register('u-cap', 'tour-sq', { team_id: 'team-sq1' });
+      expect(mockPrisma.registrationEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ eventType: 'SUBMISSION_CREATED' }),
+        }),
+      );
     });
   });
 });

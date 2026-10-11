@@ -9,7 +9,11 @@ export interface TournamentRegistrationResponse {
   team_id: string | null;
   status: string;
   registration_status?: string;
-  slot_number: number;
+  registration_state?: string;
+  roster_version?: number;
+  approvals_required?: number;
+  approvals_approved?: number;
+  slot_number: number | null;
   final_rank: number | null;
   created_at: Date;
   registered_at?: Date;
@@ -91,6 +95,7 @@ export interface TournamentResponse {
   created_by: string;
   created_at: Date;
   updated_at: Date;
+  require_player_approval?: boolean;
   is_registered?: boolean;
   isRegistered?: boolean;
   my_registration?: TournamentRegistrationResponse | null;
@@ -125,18 +130,22 @@ export interface TournamentBracketResponse {
 }
 
 export const toTournamentRegistrationResponse = (
-  reg: TournamentRegistration & { user?: User; team?: Team | null },
+  reg: any,
 ): TournamentRegistrationResponse => ({
   id: reg.id,
   registration_id: reg.id,
-  tournament_id: reg.tournamentId,
-  user_id: reg.userId,
-  team_id: reg.teamId,
+  tournament_id: reg.tournamentId || reg.tournament_id,
+  user_id: reg.userId || reg.user_id,
+  team_id: reg.teamId ?? reg.team_id ?? null,
   status: reg.status,
-  slot_number: reg.slotNumber,
-  final_rank: reg.finalRank,
-  created_at: reg.createdAt,
-  registered_at: reg.createdAt,
+  slot_number: reg.slotNumber ?? reg.slot_number ?? null,
+  final_rank: reg.finalRank ?? reg.final_rank ?? null,
+  created_at: reg.createdAt || reg.created_at,
+  registered_at: reg.createdAt || reg.created_at,
+  registration_state: reg.registration_state ?? (reg.team ? (reg.team as any).registrationState : undefined),
+  roster_version: reg.roster_version ?? (reg.team ? (reg.team as any).rosterVersion : undefined),
+  approvals_required: reg.approvals_required,
+  approvals_approved: reg.approvals_approved,
   ...(reg.user ? { user: { id: reg.user.id, name: reg.user.name, email: reg.user.email } } : {}),
   ...(reg.team ? { team: { id: reg.team.id, name: reg.team.name, tag: reg.team.tag } } : { team: null }),
 });
@@ -235,6 +244,7 @@ export const toTournamentResponse = (
     created_by: t.createdBy,
     created_at: t.createdAt,
     updated_at: t.updatedAt,
+    require_player_approval: (t as any).requirePlayerApproval ?? true,
     is_registered: isRegistered,
     isRegistered: isRegistered,
     ...(currentUserId !== undefined ? { my_registration: myRegistration } : {}),

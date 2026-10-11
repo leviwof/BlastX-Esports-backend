@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Put, Delete, Body, Param, UseGuards } from '@nestjs/common';
 import { TeamsService } from './teams.service';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { CurrentUser, JwtUser } from '../common/current-user.decorator';
@@ -7,6 +7,7 @@ import { UpdateTeamDto } from './dto/update-team.dto';
 import { JoinTeamDto } from './dto/join-team.dto';
 import { SubstitutesToggleDto } from './dto/substitutes-toggle.dto';
 import { TransferCaptainDto } from './dto/transfer-captain.dto';
+import { UpdatePlayingRosterDto } from './dto/update-playing-roster.dto';
 import { toTeamResponse, TeamResponse } from './team.mapper';
 
 @Controller(['teams', 'api/teams', 'tournaments/teams', 'api/tournaments/teams', 'v1/tournaments/teams'])
@@ -131,6 +132,16 @@ export class TeamsController {
   @Post(':id/regenerate-invite')
   async regenerateInvite(@CurrentUser() user: JwtUser, @Param('id') teamId: string): Promise<TeamResponse> {
     const team = await this.teamsService.regenerateInviteCode(user.sub, teamId);
+    return toTeamResponse(team, user.sub);
+  }
+
+  @Put(':id/playing-roster')
+  async updatePlayingRoster(
+    @CurrentUser() user: JwtUser,
+    @Param('id') teamId: string,
+    @Body() dto: UpdatePlayingRosterDto,
+  ): Promise<TeamResponse> {
+    const team = await this.teamsService.updatePlayingRoster(user.sub, teamId, dto.main_user_ids);
     return toTeamResponse(team, user.sub);
   }
 
