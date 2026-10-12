@@ -182,9 +182,59 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       });
       if (claimed.count === 0) continue;
       this.logger.log(`[SCHEDULER] Auto-released room credentials for tournament "${t.title}"`);
+      await this.prisma.tournamentAuditLog.create({
+        data: {
+          tournamentId: t.id,
+          action: 'ROOM_CREDENTIALS_AUTO_RELEASED',
+          details: {
+            roomId: t.roomId,
+            autoReleasedAt: now.toISOString(),
+          },
+          adminUserId: 'scheduler',
+        },
+      });
       this.eventEmitter.emit('room.released', {
         tournamentId: t.id,
         tournamentTitle: t.title,
+      });
+    }
+
+    // Auto Release Match Room Credentials
+    const toReleaseMatchRooms = await this.prisma.match.findMany({
+      where: {
+        status: { in: [MatchStatus.SCHEDULED, MatchStatus.LIVE] },
+        roomId: { not: null },
+        roomReleasedAt: null,
+        scheduledAt: { lte: releaseTimeWindow },
+      },
+      include: { tournament: { select: { id: true, title: true } } },
+    });
+
+    for (const m of toReleaseMatchRooms) {
+      const claimed = await this.prisma.match.updateMany({
+        where: { id: m.id, roomReleasedAt: null },
+        data: { roomReleasedAt: now },
+      });
+      if (claimed.count === 0) continue;
+      this.logger.log(`[SCHEDULER] Auto-released room credentials for match #${m.matchNumber}`);
+      await this.prisma.tournamentAuditLog.create({
+        data: {
+          tournamentId: m.tournamentId,
+          action: 'ROOM_CREDENTIALS_AUTO_RELEASED',
+          details: {
+            matchId: m.id,
+            matchKey: `m_${m.id}`,
+            roomId: m.roomId,
+            autoReleasedAt: now.toISOString(),
+          },
+          adminUserId: 'scheduler',
+        },
+      });
+      this.eventEmitter.emit('room.released', {
+        tournamentId: m.tournamentId,
+        tournamentTitle: m.tournament.title,
+        matchId: m.id,
+        matchKey: `m_${m.id}`,
       });
     }
 
@@ -212,6 +262,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
 
       this.eventEmitter.emit('match.starting_soon', {
         matchId: match.id,
+        matchKey: `m_${match.id}`,
         tournamentId: match.tournament.id,
         tournamentTitle: match.tournament.title,
         startsAt: match.scheduledAt,

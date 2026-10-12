@@ -45,6 +45,7 @@ import { toTeamResponse, toPrivacySafeTeamPreview, PrivacySafeTeamPreviewRespons
 import { TournamentBracketResponse, TournamentStage, StageTeam } from './tournament.mapper';
 import { randomBytes } from 'crypto';
 import { SquadsService } from '../squads/squads.service';
+import { MatchAccessService } from '../matches/match-access.service';
 
 import { RegistrationService } from './registration.service';
 
@@ -56,6 +57,7 @@ export class TournamentsService implements OnModuleInit {
     private readonly config: ConfigService,
     @Optional() private readonly squadsService?: SquadsService,
     @Optional() private readonly registrationService?: RegistrationService,
+    @Optional() private readonly matchAccess?: MatchAccessService,
   ) {}
 
   async onModuleInit() {
@@ -349,6 +351,18 @@ export class TournamentsService implements OnModuleInit {
         tournamentTitle: tournament.title,
       });
     }
+
+    await this.prisma.tournamentAuditLog.create({
+      data: {
+        tournamentId,
+        action: 'ROOM_CREDENTIALS_PUBLISHED',
+        details: {
+          roomId: dto.room_id,
+          release_now: !!dto.release_now,
+        },
+        adminUserId: adminId,
+      },
+    });
 
     return updated;
   }
@@ -1238,28 +1252,94 @@ export class TournamentsService implements OnModuleInit {
   ): Promise<{ room_id: string; room_password: string; visibleFrom: Date; starts_at: Date }> {
     const tournament = await this.getTournamentEntity(tournamentId);
 
-    // Check if user is registered directly or through a team
-    const userTeams = await this.prisma.teamMember.findMany({
-      where: { userId },
-      select: { teamId: true },
-    });
-    const teamIds = userTeams.map((t) => t.teamId);
+    if (this.matchAccess) {
+      const myAccess = await this.matchAccess.getMyAccess(userId, tournamentId);
 
-    const registration = await this.prisma.tournamentRegistration.findFirst({
-      where: {
-        tournamentId,
-        status: RegistrationStatus.CONFIRMED,
-        OR: [{ userId }, ...(teamIds.length > 0 ? [{ teamId: { in: teamIds } }] : [])],
-      },
-    });
+      if (
+        !myAccess.registration ||
+        myAccess.registration.status !== RegistrationStatus.CONFIRMED
+      ) {
+        throw new HttpException(
+          { code: 'NOT_REGISTERED', message: 'You are not registered for this tournament.' },
+          HttpStatus.FORBIDDEN,
+        );
+      }
 
-    if (!registration) {
-      throw new HttpException(
-        { code: 'NOT_REGISTERED', message: 'You are not registered for this tournament.' },
-        HttpStatus.FORBIDDEN,
+      if (myAccess.access !== 'PLAYING') {
+        throw new HttpException(
+          {
+            code: 'NOT_PLAYING_MEMBER',
+            message: 'Only active playing members of the roster can access room credentials.',
+          },
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
+      if (myAccess.isDisqualified) {
+        throw new HttpException(
+          { code: 'ELIMINATED', message: 'Your registration has been disqualified.' },
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
+      const units = await this.matchAccess.listMatchUnits(tournamentId);
+      const userUnits = units.filter((u) =>
+        this.matchAccess!.teamParticipatesInMatchUnit(
+          u,
+          myAccess.team?.id ?? null,
+          userId,
+          myAccess.registration!.id,
+        ),
       );
+
+      if (userUnits.length > 0) {
+        if (myAccess.isEliminated) {
+          throw new HttpException(
+            { code: 'ELIMINATED', message: 'Your team has been eliminated from this tournament.' },
+            HttpStatus.FORBIDDEN,
+          );
+        }
+
+        const activeUnit =
+          userUnits.find((u) => u.status === 'SCHEDULED' || u.status === 'LIVE') ||
+          userUnits[userUnits.length - 1];
+
+        const creds = await this.matchAccess.assertCanSeeCredentials(
+          userId,
+          activeUnit.matchKey,
+          tournamentId,
+        );
+
+        return {
+          room_id: creds.room_id,
+          room_password: creds.room_password,
+          visibleFrom: creds.visible_from,
+          starts_at: creds.scheduled_at,
+        };
+      }
+
+      if (units.length > 0) {
+        if (myAccess.isEliminated) {
+          throw new HttpException(
+            { code: 'ELIMINATED', message: 'Your team has been eliminated from this tournament.' },
+            HttpStatus.FORBIDDEN,
+          );
+        }
+        throw new HttpException(
+          { code: 'NOT_IN_THIS_MATCH', message: 'Your team is not assigned to this match.' },
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
+      if (myAccess.isEliminated) {
+        throw new HttpException(
+          { code: 'ELIMINATED', message: 'Your team has been eliminated from this tournament.' },
+          HttpStatus.FORBIDDEN,
+        );
+      }
     }
 
+    // Fallback or single-lobby tournament without match records
     const now = new Date();
     const revealAt = tournament.roomReleasedAt ?? new Date(tournament.startsAt.getTime() - 15 * 60 * 1000);
     const isReleased = revealAt <= now;

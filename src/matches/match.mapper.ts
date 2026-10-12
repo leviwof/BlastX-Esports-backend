@@ -28,9 +28,9 @@ export interface MatchResponse {
   winner_team_name: string | null;
   top_killer_name: string | null;
   stream_url: string | null;
-  room_id: string | null;
-  room_password: string | null;
-  password: string | null;
+  room_id?: string | null;
+  room_password?: string | null;
+  password?: string | null;
   is_room_released: boolean;
   created_at: Date;
   results?: MatchResultResponse[];
@@ -117,8 +117,6 @@ export const toMatchResponse = (
   }
 
   const groupName = m.groupName || (m as any).group || null;
-  const roomId = m.roomId || m.tournament?.roomId || null;
-  const roomPassword = m.roomPassword || m.tournament?.roomPassword || null;
   const roomReleasedAt = m.roomReleasedAt || m.tournament?.roomReleasedAt;
   const now = new Date();
   const isRoomReleased = roomReleasedAt ? new Date(roomReleasedAt) <= now : true;
@@ -138,9 +136,6 @@ export const toMatchResponse = (
     winner_team_name: winnerTeamName,
     top_killer_name: topKillerName,
     stream_url: (m as any).streamUrl ?? null,
-    room_id: isRoomReleased ? roomId : null,
-    room_password: isRoomReleased ? roomPassword : null,
-    password: isRoomReleased ? roomPassword : null,
     is_room_released: isRoomReleased,
     created_at: m.createdAt,
     ...(m.results ? { results: m.results.map(toMatchResultResponse) } : {}),

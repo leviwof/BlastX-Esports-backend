@@ -40,7 +40,7 @@ import { toTeamResponse, TeamResponse } from '../teams/team.mapper';
 import { TournamentBracketService } from './tournament-bracket.service';
 import { RegistrationService } from './registration.service';
 
-@Controller(['tournaments', 'api/tournaments'])
+@Controller(['tournaments', 'api/tournaments', 'v1/tournaments'])
 export class TournamentsController {
   constructor(
     private readonly tournamentsService: TournamentsService,

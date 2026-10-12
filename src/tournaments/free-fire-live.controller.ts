@@ -11,7 +11,7 @@ import { FilterTournamentQueryDto } from './dto/filter-tournament.dto';
 import { TournamentsService } from './tournaments.service';
 
 /** Public API contract for the dedicated Free Fire Live experience. */
-@Controller('free-fire-live')
+@Controller(['free-fire-live', 'v1/free-fire-live', 'api/free-fire-live'])
 export class FreeFireLiveController {
   constructor(
     private readonly tournaments: TournamentsService,

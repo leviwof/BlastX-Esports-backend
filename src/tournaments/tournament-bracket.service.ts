@@ -3,8 +3,13 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  HttpException,
+  HttpStatus,
+  Optional,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
+import { MatchAccessService } from '../matches/match-access.service';
 import {
   TournamentRoundType,
   RoundStatus,
@@ -19,7 +24,11 @@ import {
 
 @Injectable()
 export class TournamentBracketService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly matchAccess?: MatchAccessService,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
+  ) {}
 
   // ==========================================
   // AUDIT LOG HELPER
@@ -1593,11 +1602,133 @@ export class TournamentBracketService {
       adminUserId,
     );
 
+    if (releasedAt && releasedAt <= new Date()) {
+      this.eventEmitter?.emit('room.released', {
+        tournamentId,
+        tournamentTitle: group.round?.tournamentId ? 'Tournament' : 'Tournament',
+        groupId: group.id,
+        matchKey: `g_${group.id}`,
+      });
+    }
+
     return updated;
   }
 
   async getPlayerMatchCredentials(tournamentId: string, userId: string) {
-    // Find player's team in this tournament
+    if (this.matchAccess) {
+      const myAccess = await this.matchAccess.getMyAccess(userId, tournamentId);
+
+      if (
+        !myAccess.registration ||
+        myAccess.registration.status !== RegistrationStatus.CONFIRMED
+      ) {
+        throw new HttpException(
+          { code: 'NOT_REGISTERED', message: 'You are not registered for this tournament.' },
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
+      if (myAccess.access !== 'PLAYING') {
+        throw new HttpException(
+          {
+            code: 'NOT_PLAYING_MEMBER',
+            message: 'Only active playing members of the roster can access room credentials.',
+          },
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
+      if (myAccess.isDisqualified) {
+        throw new HttpException(
+          { code: 'ELIMINATED', message: 'Your registration has been disqualified.' },
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
+      const teamId = myAccess.team?.id;
+
+      // 1. Check tournament_group_teams
+      const groupTeam = await this.prisma.tournamentGroupTeam.findFirst({
+        where: {
+          tournamentTeamId: teamId,
+          group: {
+            round: {
+              tournamentId,
+              status: { in: [RoundStatus.LIVE, RoundStatus.SCHEDULED, RoundStatus.TIE_BREAKER_PENDING] },
+            },
+          },
+        },
+        include: {
+          group: {
+            include: { round: true },
+          },
+        },
+        orderBy: { group: { round: { roundNumber: 'desc' } } },
+      });
+
+      if (groupTeam) {
+        const creds = await this.matchAccess.assertCanSeeCredentials(
+          userId,
+          `g_${groupTeam.group.id}`,
+          tournamentId,
+        );
+        return {
+          round: groupTeam.group.round.roundType,
+          roundNumber: groupTeam.group.round.roundNumber,
+          groupName: groupTeam.group.name,
+          roomId: creds.room_id,
+          roomPassword: creds.room_password,
+          credentialsReleasedAt: creds.visible_from,
+          starts_at: creds.scheduled_at,
+        };
+      }
+
+      // 2. Check matches table
+      const units = await this.matchAccess.listMatchUnits(tournamentId);
+      const userUnits = units.filter((u) =>
+        this.matchAccess!.teamParticipatesInMatchUnit(
+          u,
+          teamId ?? null,
+          userId,
+          myAccess.registration!.id,
+        ),
+      );
+
+      if (userUnits.length > 0) {
+        const activeUnit =
+          userUnits.find((u) => u.status === 'SCHEDULED' || u.status === 'LIVE') ||
+          userUnits[userUnits.length - 1];
+
+        const creds = await this.matchAccess.assertCanSeeCredentials(
+          userId,
+          activeUnit.matchKey,
+          tournamentId,
+        );
+        return {
+          round: activeUnit.roundType || activeUnit.roundKey,
+          roundNumber: activeUnit.matchNumber,
+          groupName: activeUnit.groupName,
+          roomId: creds.room_id,
+          roomPassword: creds.room_password,
+          credentialsReleasedAt: creds.visible_from,
+          starts_at: creds.scheduled_at,
+        };
+      }
+
+      if (myAccess.isEliminated) {
+        throw new HttpException(
+          { code: 'ELIMINATED', message: 'Your team has been eliminated from this tournament.' },
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
+      throw new HttpException(
+        { code: 'NOT_IN_THIS_MATCH', message: 'No active match or group found for your team in this tournament.' },
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
+    // Fallback if matchAccess service is not injected
     const membership = await this.prisma.teamMember.findFirst({
       where: {
         userId,
@@ -1616,7 +1747,6 @@ export class TournamentBracketService {
 
     const teamId = membership.teamId;
 
-    // Find the latest active group team assignment
     const groupTeam = await this.prisma.tournamentGroupTeam.findFirst({
       where: {
         tournamentTeamId: teamId,
@@ -1642,18 +1772,14 @@ export class TournamentBracketService {
     const group = groupTeam.group;
     const now = new Date();
 
-    // Check credentials release isolation
-    if (!group.credentialsReleasedAt) {
-      throw new ForbiddenException('Room credentials have not yet been released for your group.');
-    }
-
-    // Allow access if releasedAt <= now
-    if (group.credentialsReleasedAt > now) {
-      const minutesUntil = Math.round(
-        (group.credentialsReleasedAt.getTime() - now.getTime()) / 60000,
-      );
-      throw new ForbiddenException(
-        `Room credentials will be released in ${minutesUntil} minute(s).`,
+    if (!group.credentialsReleasedAt || group.credentialsReleasedAt > now) {
+      throw new HttpException(
+        {
+          code: 'ROOM_NOT_AVAILABLE',
+          message: 'Room credentials have not yet been released for your group.',
+          reveal_at: group.credentialsReleasedAt?.toISOString() || null,
+        },
+        425,
       );
     }
 

@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { ConfigService } from '@nestjs/config';
-import { RegistrationStatus } from '@prisma/client';
+import { RegistrationStatus, OwnerRole, TeamMemberRole, QualificationDestination } from '@prisma/client';
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging, type Messaging } from 'firebase-admin/messaging';
 import { PrismaService } from '../prisma/prisma.service';
@@ -37,6 +37,9 @@ export interface RoomReleasedPayload {
   tournamentId: string;
   tournamentTitle: string;
   groupName?: string;
+  groupId?: string;
+  matchId?: string;
+  matchKey?: string;
 }
 
 export interface TournamentPublishedPayload {
@@ -51,6 +54,7 @@ export interface MatchStartingSoonPayload {
   tournamentId: string;
   tournamentTitle: string;
   startsAt: Date;
+  matchKey?: string;
 }
 
 export interface WalletCreditedPayload {
@@ -766,38 +770,134 @@ export class NotificationsService implements OnModuleInit {
 
   // --- 3. Stage & Room Credentials Events ---
   @OnEvent('tournament.group_allocated')
-  async handleGroupAllocated(payload: { userIds: string[]; tournamentTitle: string; tournamentId: string; groupName: string; stageNumber: number }): Promise<void> {
+  async handleGroupAllocated(payload: {
+    userIds: string[];
+    tournamentTitle: string;
+    tournamentId: string;
+    groupName: string;
+    stageNumber: number;
+    matchKey?: string;
+  }): Promise<void> {
     await this.sendToUsers(payload.userIds, {
       type: 'group_allocated',
       title: `Stage ${payload.stageNumber}: Group Assigned!`,
       body: `Your team has been placed in ${payload.groupName} for ${payload.tournamentTitle}.`,
-      data: { tournamentId: payload.tournamentId, stageNumber: payload.stageNumber, groupName: payload.groupName },
+      data: {
+        tournamentId: payload.tournamentId,
+        stageNumber: payload.stageNumber,
+        groupName: payload.groupName,
+        ...(payload.matchKey ? { matchKey: payload.matchKey } : {}),
+      },
     });
   }
 
   @OnEvent('room.released')
   @OnEvent('tournament.room_published')
   async handleRoomReleased(payload: RoomReleasedPayload): Promise<void> {
-    const registrations = await this.prisma.tournamentRegistration.findMany({
-      where: { tournamentId: payload.tournamentId, status: RegistrationStatus.CONFIRMED },
-      select: {
-        userId: true,
-        team: { select: { members: { select: { userId: true } } } },
+    const matchKey =
+      payload.matchKey ||
+      (payload.matchId
+        ? `m_${payload.matchId}`
+        : payload.groupId
+          ? `g_${payload.groupId}`
+          : undefined);
+
+    let registrations = await this.prisma.tournamentRegistration.findMany({
+      where: {
+        tournamentId: payload.tournamentId,
+        status: RegistrationStatus.CONFIRMED,
+      },
+      include: {
+        team: {
+          include: {
+            members: true,
+          },
+        },
       },
     });
 
-    const userIds = registrations.flatMap((reg) => [
-      reg.userId,
-      ...(reg.team?.members.map((m) => m.userId) ?? []),
-    ]);
+    // 1. If matchKey is present, restrict to participating teams
+    if (matchKey) {
+      if (matchKey.startsWith('m_')) {
+        const match = await this.prisma.match.findUnique({
+          where: { id: matchKey.replace('m_', '') },
+          include: {
+            group: { include: { groupTeams: true } },
+            results: true,
+          },
+        });
+        if (match) {
+          if (match.groupId && match.group?.groupTeams.length) {
+            const teamIds = new Set(
+              match.group.groupTeams.map((gt) => gt.tournamentTeamId),
+            );
+            registrations = registrations.filter(
+              (r) => r.teamId && teamIds.has(r.teamId),
+            );
+          } else if (match.results.length) {
+            const regIds = new Set(match.results.map((res) => res.registrationId));
+            registrations = registrations.filter((r) => regIds.has(r.id));
+          }
+        }
+      } else if (matchKey.startsWith('g_')) {
+        const group = await this.prisma.tournamentGroup.findUnique({
+          where: { id: matchKey.replace('g_', '') },
+          include: { groupTeams: true },
+        });
+        if (group && group.groupTeams.length) {
+          const teamIds = new Set(
+            group.groupTeams.map((gt) => gt.tournamentTeamId),
+          );
+          registrations = registrations.filter(
+            (r) => r.teamId && teamIds.has(r.teamId),
+          );
+        }
+      }
+    }
+
+    // 2. Filter out eliminated teams
+    const eliminatedQualifications =
+      await this.prisma.roundQualification.findMany({
+        where: {
+          round: { tournamentId: payload.tournamentId },
+          destination: QualificationDestination.ELIMINATED,
+        },
+        select: { tournamentTeamId: true },
+      });
+    const eliminatedTeamIds = new Set(
+      eliminatedQualifications.map((eq) => eq.tournamentTeamId),
+    );
+    registrations = registrations.filter(
+      (r) => !r.teamId || !eliminatedTeamIds.has(r.teamId),
+    );
+
+    // 3. Collect ONLY active playing members (not managers or substitutes)
+    const playingUserIds: string[] = [];
+    for (const reg of registrations) {
+      if (reg.team) {
+        const isLeaderOwner = reg.team.ownerRole === OwnerRole.LEADER;
+        const members = reg.team.members.filter((m) => {
+          if (m.role === TeamMemberRole.PLAYER) return true;
+          if (m.role === TeamMemberRole.CAPTAIN && isLeaderOwner) return true;
+          return false; // MANAGER and SUBSTITUTE are never playing
+        });
+        playingUserIds.push(...members.map((m) => m.userId));
+      } else {
+        // SOLO registrant
+        playingUserIds.push(reg.userId);
+      }
+    }
+
+    const uniquePlayingUserIds = Array.from(new Set(playingUserIds));
 
     // SECURITY RULE: Never include Room ID or Room Password in notification body or payload!
-    await this.sendToUsers(userIds, {
+    await this.sendToUsers(uniquePlayingUserIds, {
       type: 'room_published',
       title: '🔑 Room Credentials Published!',
       body: `Room details for ${payload.tournamentTitle} are ready. Open the app to view them securely.`,
       data: {
         tournamentId: payload.tournamentId,
+        ...(matchKey ? { matchKey } : {}),
         action: 'room_details',
       },
     });
@@ -871,6 +971,8 @@ export class NotificationsService implements OnModuleInit {
       ...(registration.team?.members.map((member) => member.userId) ?? []),
     ]);
 
+    const matchKey = payload.matchKey || `m_${payload.matchId}`;
+
     await this.sendToUsers(userIds, {
       type: 'match_reminder',
       title: '⏰ Match Starting in 15 Minutes!',
@@ -878,6 +980,7 @@ export class NotificationsService implements OnModuleInit {
       data: {
         tournamentId: payload.tournamentId,
         matchId: payload.matchId,
+        matchKey,
         action: 'match_reminder',
       },
     });

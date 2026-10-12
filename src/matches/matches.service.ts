@@ -142,6 +142,19 @@ export class MatchesService {
       return createdResults;
     });
 
+    // Audit log match results entry
+    await this.prisma.tournamentAuditLog.create({
+      data: {
+        tournamentId: match.tournamentId,
+        action: 'MATCH_RESULTS_RECORDED',
+        details: {
+          matchId,
+          resultCount: results.length,
+        },
+        adminUserId: adminId,
+      },
+    });
+
     // Rebuild leaderboard and update cache
     await this.rebuildLeaderboardCache(match.tournamentId);
 
@@ -511,8 +524,6 @@ export class MatchesService {
           status: userMatch.status.toLowerCase(),
           map: userMatch.map || tournament.map || 'Bermuda',
           opponent_team_names: opponentTeamNames,
-          room_id: roomId,
-          password: password,
           is_published: isPublished,
           reveal_at: revealAt,
           starts_at: startsAt,
@@ -572,7 +583,7 @@ export class MatchesService {
         }
       }
 
-      // SECURITY RULE: General groups list MUST ALWAYS have room_id = null and password = null!
+      // SECURITY RULE: General groups list MUST NEVER have room credentials!
       currentRound.groups.push({
         id: m.id || (m.groupName ? m.groupName.toLowerCase().replace(/\s+/g, '_') : `group_${i + 1}`),
         group_name: m.groupName || `Group ${currentRound.groups.length + 1}`,
@@ -582,8 +593,6 @@ export class MatchesService {
         starts_at: m.scheduledAt ? m.scheduledAt.toISOString() : null,
         ended_at: m.endedAt ? m.endedAt.toISOString() : null,
         is_published: isPublished,
-        room_id: null, // SECURITY RULE: Credentials NEVER in general groups array
-        password: null, // SECURITY RULE: Credentials NEVER in general groups array
         winner_team_name: m.winnerTeamName || null,
         top_mvp_name: m.topKillerName || null,
         teams: groupTeams,
@@ -621,8 +630,6 @@ export class MatchesService {
             starts_at: tournament.startsAt ? tournament.startsAt.toISOString() : null,
             ended_at: null,
             is_published: false,
-            room_id: null,
-            password: null,
             winner_team_name: null,
             top_mvp_name: null,
             teams: defaultTeams,
@@ -644,9 +651,6 @@ export class MatchesService {
         legacyGroupsMap.set(gName, {
           group_name: gName,
           group: gName,
-          room_id: null,
-          room_password: null,
-          password: null,
           is_room_released: m.is_room_released,
           matches: [],
         });
@@ -775,8 +779,25 @@ export class MatchesService {
         tournamentId: match.tournamentId,
         tournamentTitle: match.tournament?.title || 'Tournament',
         groupId: groupId,
+        matchId: match.id,
+        matchKey: `m_${match.id}`,
       });
     }
+
+    await this.prisma.tournamentAuditLog.create({
+      data: {
+        tournamentId: match.tournamentId,
+        action: 'GROUP_ROOM_CREDENTIALS_PUBLISHED',
+        details: {
+          groupId,
+          matchId: match.id,
+          matchKey: `m_${match.id}`,
+          roomId: updatedMatch.roomId,
+          is_published: !!updatedMatch.roomReleasedAt,
+        },
+        adminUserId: adminId,
+      },
+    });
 
     return {
       status: 'success',
@@ -837,6 +858,20 @@ export class MatchesService {
           }
         }
       }
+
+      await this.prisma.tournamentAuditLog.create({
+        data: {
+          tournamentId: match.tournamentId,
+          action: 'GROUP_RESULTS_RECORDED',
+          details: {
+            groupId,
+            matchId: match.id,
+            matchKey: `m_${match.id}`,
+            winnerTeamName: dto.winner_team_name || dto.winner_team_id || null,
+          },
+          adminUserId: adminId,
+        },
+      });
 
       await this.rebuildLeaderboardCache(match.tournamentId);
 
