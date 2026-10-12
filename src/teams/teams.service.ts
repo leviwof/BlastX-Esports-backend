@@ -27,10 +27,16 @@ import {
   OwnerRole,
   TeamRegistrationState,
   TeamJoinRequestStatus,
+  MatchStatus,
+  RoundStatus,
+  RegistrationSubmissionStatus,
+  RegistrationSubmissionKind,
+  RegistrationApprovalStatus,
 } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { SquadsService } from '../squads/squads.service';
 import { handleRosterChange } from './roster-change.helper';
+import { RosterChangeDto } from './dto/roster-change.dto';
 
 export type TeamWithMembers = Team & {
   members: (TeamMember & { user: User & { gameProfiles?: GameProfile[] } })[];
@@ -163,6 +169,32 @@ export class TeamsService {
         },
       },
       include: {
+        tournament: {
+          select: {
+            id: true,
+            title: true,
+            teamMode: true,
+            rosterLockAt: true,
+            startsAt: true,
+            status: true,
+            requirePlayerApproval: true,
+            matches: {
+              take: 1,
+              orderBy: { scheduledAt: 'asc' },
+              select: { scheduledAt: true },
+            },
+          },
+        },
+        registrationSubmissions: {
+          where: { status: RegistrationSubmissionStatus.ACTIVE },
+          include: {
+            approvals: {
+              include: {
+                user: { select: { id: true, name: true, profilePic: true } },
+              },
+            },
+          },
+        },
         members: {
           include: {
             user: {
@@ -187,6 +219,32 @@ export class TeamsService {
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
       include: {
+        tournament: {
+          select: {
+            id: true,
+            title: true,
+            teamMode: true,
+            rosterLockAt: true,
+            startsAt: true,
+            status: true,
+            requirePlayerApproval: true,
+            matches: {
+              take: 1,
+              orderBy: { scheduledAt: 'asc' },
+              select: { scheduledAt: true },
+            },
+          },
+        },
+        registrationSubmissions: {
+          where: { status: RegistrationSubmissionStatus.ACTIVE },
+          include: {
+            approvals: {
+              include: {
+                user: { select: { id: true, name: true, profilePic: true } },
+              },
+            },
+          },
+        },
         members: {
           include: {
             user: {
@@ -226,7 +284,91 @@ export class TeamsService {
       throw new NotFoundException('No team found matching this invite code for this tournament');
     }
 
-    await this.assertRosterUnlocked(team.id);
+    const effectiveTournamentId = tournamentId || team.tournamentId;
+    if (effectiveTournamentId) {
+      const existingTournamentTeam = await this.prisma.teamMember.findFirst({
+        where: {
+          userId,
+          team: { tournamentId: effectiveTournamentId },
+        },
+        select: { teamId: true },
+      });
+      if (existingTournamentTeam && existingTournamentTeam.teamId !== team.id) {
+        throw new BadRequestException({
+          success: false,
+          status: 'error',
+          code: 'ALREADY_IN_TOURNAMENT',
+          error_code: 'ALREADY_IN_TOURNAMENT',
+          message: 'You have already joined/registered for this tournament.',
+        });
+      }
+    }
+
+    const tournament = effectiveTournamentId
+      ? await this.prisma.tournament.findUnique({
+          where: { id: effectiveTournamentId },
+          select: { teamMode: true, rosterLockAt: true, startsAt: true },
+        })
+      : null;
+
+    const isConfirmed =
+      team.registrationState === TeamRegistrationState.CONFIRMED ||
+      (await this.prisma.tournamentRegistration.findFirst({
+        where: { teamId: team.id, status: RegistrationStatus.CONFIRMED },
+        select: { id: true },
+      })) !== null;
+
+    if (team.registrationState === TeamRegistrationState.WAITLISTED) {
+      throw new BadRequestException({
+        code: 'TEAM_ROSTER_LOCKED',
+        error_code: 'TEAM_ROSTER_LOCKED',
+        message: 'The team roster cannot be changed while waitlisted.',
+      });
+    }
+
+    const wantsSubstitute =
+      dto.as_substitute === true ||
+      dto.role === TeamMemberRole.SUBSTITUTE ||
+      dto.rosterType?.toUpperCase() === 'SUBSTITUTE';
+
+    if (isConfirmed) {
+      if (effectiveTournamentId) {
+        const { isLocked } = await this.getEffectiveRosterLock(effectiveTournamentId);
+        if (isLocked) {
+          throw new BadRequestException({
+            code: 'ROSTER_LOCKED_BY_TIME',
+            error_code: 'ROSTER_LOCKED_BY_TIME',
+            message: 'The roster is locked because the lock time has passed or competition has started.',
+          });
+        }
+      }
+
+      if (tournament?.teamMode === TeamMode.DUO) {
+        throw new BadRequestException({
+          code: 'TEAM_ROSTER_LOCKED',
+          error_code: 'TEAM_ROSTER_LOCKED',
+          message: 'The team roster cannot be changed after tournament registration.',
+        });
+      }
+
+      if (!wantsSubstitute) {
+        throw new BadRequestException({
+          code: 'TEAM_ROSTER_LOCKED',
+          error_code: 'TEAM_ROSTER_LOCKED',
+          message: 'Only substitutes can join a confirmed team.',
+        });
+      }
+
+      if (!team.acceptingSubstitutes) {
+        throw new BadRequestException({
+          code: 'TEAM_ROSTER_LOCKED',
+          error_code: 'TEAM_ROSTER_LOCKED',
+          message: 'This team is not currently accepting substitutes.',
+        });
+      }
+    } else {
+      await this.assertRosterUnlocked(team.id);
+    }
 
     // Must have a Game Profile for team's game (upsert if provided in dto.player)
     let profile = await this.prisma.gameProfile.findUnique({
@@ -276,34 +418,18 @@ export class TeamsService {
       throw new BadRequestException('You are already a member of this team');
     }
 
-    const effectiveTournamentId = tournamentId || team.tournamentId;
-    if (effectiveTournamentId) {
-      const existingTournamentTeam = await this.prisma.teamMember.findFirst({
-        where: {
-          userId,
-          team: { tournamentId: effectiveTournamentId },
-        },
-        select: { teamId: true },
+    const isDuo = tournament?.teamMode === TeamMode.DUO;
+    if (isDuo && wantsSubstitute) {
+      throw new BadRequestException({
+        code: 'ROSTER_FULL',
+        error_code: 'ROSTER_FULL',
+        message: 'Duo teams do not accept substitutes',
       });
-      if (existingTournamentTeam && existingTournamentTeam.teamId !== team.id) {
-        throw new BadRequestException({
-          success: false,
-          status: 'error',
-          code: 'ALREADY_IN_TOURNAMENT',
-          error_code: 'ALREADY_IN_TOURNAMENT',
-          message: 'You have already joined/registered for this tournament.',
-        });
-      }
     }
 
-    const tournament = effectiveTournamentId
-      ? await this.prisma.tournament.findUnique({
-          where: { id: effectiveTournamentId },
-          select: { teamMode: true },
-        })
-      : null;
-    const maxMainPlayers = tournament?.teamMode === TeamMode.DUO ? 2 : 4;
-    const maxRosterSize = maxMainPlayers + (team.acceptingSubstitutes ? 1 : 0);
+    const maxMainPlayers = isDuo ? 2 : 4;
+    const canAcceptSubs = isDuo ? false : team.acceptingSubstitutes;
+    const maxRosterSize = maxMainPlayers + (canAcceptSubs ? 1 : 0);
     if (team.members.length >= maxRosterSize) {
       throw new BadRequestException({
         code: 'ROSTER_FULL',
@@ -313,10 +439,7 @@ export class TeamsService {
     }
 
     // Determine target role (Substitute vs Main Player)
-    let isJoiningAsSubstitute =
-      dto.as_substitute === true ||
-      dto.role === TeamMemberRole.SUBSTITUTE ||
-      dto.rosterType?.toUpperCase() === 'SUBSTITUTE';
+    let isJoiningAsSubstitute = wantsSubstitute;
 
     const mainPlayers = team.members.filter(
       (m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER,
@@ -325,14 +448,14 @@ export class TeamsService {
 
     // If main roster is full, fallback to substitute if team accepts substitutes and has slot
     if (!isJoiningAsSubstitute && mainPlayers.length >= maxMainPlayers) {
-      if (team.acceptingSubstitutes && !existingSub) {
+      if (canAcceptSubs && !existingSub) {
         isJoiningAsSubstitute = true;
       }
     }
 
     let targetRole: TeamMemberRole = TeamMemberRole.PLAYER;
     if (isJoiningAsSubstitute) {
-      if (!team.acceptingSubstitutes) {
+      if (!canAcceptSubs) {
         throw new BadRequestException('This team is not currently accepting substitutes');
       }
       if (existingSub) {
@@ -950,7 +1073,6 @@ export class TeamsService {
 
   async leaveTeam(userId: string, teamId: string): Promise<{ message: string }> {
     const team = await this.getTeamById(teamId);
-    await this.assertRosterUnlocked(teamId);
     const member = team.members.find((m) => m.userId === userId);
     if (!member) {
       throw new NotFoundException('You are not a member of this team');
@@ -958,6 +1080,33 @@ export class TeamsService {
 
     if (team.captainId === userId) {
       throw new BadRequestException('A captain cannot leave without transferring captaincy or disbanding the team');
+    }
+
+    const isConfirmed =
+      team.registrationState === TeamRegistrationState.CONFIRMED ||
+      (await this.prisma.tournamentRegistration.findFirst({
+        where: { teamId, status: RegistrationStatus.CONFIRMED },
+        select: { id: true },
+      })) !== null;
+
+    if (isConfirmed && team.tournamentId) {
+      const { isLocked } = await this.getEffectiveRosterLock(team.tournamentId);
+      if (isLocked) {
+        throw new BadRequestException({
+          code: 'ROSTER_LOCKED_BY_TIME',
+          error_code: 'ROSTER_LOCKED_BY_TIME',
+          message: 'The roster is locked because the lock time has passed or the competition has started.',
+        });
+      }
+      if (member.role !== TeamMemberRole.SUBSTITUTE) {
+        throw new BadRequestException({
+          code: 'TEAM_ROSTER_LOCKED',
+          error_code: 'TEAM_ROSTER_LOCKED',
+          message: 'Ordinary playing members cannot leave a confirmed team. Use roster change.',
+        });
+      }
+    } else {
+      await this.assertRosterUnlocked(teamId);
     }
 
     const beforeMain = team.members
@@ -989,7 +1138,6 @@ export class TeamsService {
 
   async removeMember(captainId: string, teamId: string, targetUserId: string): Promise<{ message: string }> {
     const team = await this.getTeamById(teamId);
-    await this.assertRosterUnlocked(teamId);
     if (team.captainId !== captainId) {
       throw new ForbiddenException('Only the team captain can remove members');
     }
@@ -1001,6 +1149,33 @@ export class TeamsService {
     const targetMember = team.members.find((m) => m.userId === targetUserId);
     if (!targetMember) {
       throw new NotFoundException('Target user is not a member of this team');
+    }
+
+    const isConfirmed =
+      team.registrationState === TeamRegistrationState.CONFIRMED ||
+      (await this.prisma.tournamentRegistration.findFirst({
+        where: { teamId, status: RegistrationStatus.CONFIRMED },
+        select: { id: true },
+      })) !== null;
+
+    if (isConfirmed && team.tournamentId) {
+      const { isLocked } = await this.getEffectiveRosterLock(team.tournamentId);
+      if (isLocked) {
+        throw new BadRequestException({
+          code: 'ROSTER_LOCKED_BY_TIME',
+          error_code: 'ROSTER_LOCKED_BY_TIME',
+          message: 'The roster is locked because the lock time has passed or the competition has started.',
+        });
+      }
+      if (targetMember.role !== TeamMemberRole.SUBSTITUTE) {
+        throw new BadRequestException({
+          code: 'TEAM_ROSTER_LOCKED',
+          error_code: 'TEAM_ROSTER_LOCKED',
+          message: 'Ordinary playing members cannot be removed directly from a confirmed team. Use roster change.',
+        });
+      }
+    } else {
+      await this.assertRosterUnlocked(teamId);
     }
 
     const beforeMain = team.members
@@ -1365,32 +1540,440 @@ export class TeamsService {
     return toTeamDetailResponse(team);
   }
 
-  async assertRosterUnlocked(teamId: string): Promise<void> {
+  async hasCompetitionStarted(tournamentId: string): Promise<boolean> {
+    const activeMatch = await this.prisma.match.findFirst({
+      where: {
+        tournamentId,
+        status: { in: [MatchStatus.LIVE, MatchStatus.COMPLETED] },
+      },
+      select: { id: true },
+    });
+    if (activeMatch) return true;
+
+    const startedRound = await this.prisma.tournamentRound.findFirst({
+      where: {
+        tournamentId,
+        OR: [
+          { status: { in: [RoundStatus.LIVE, RoundStatus.COMPLETED] } },
+          { startedAt: { not: null } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (startedRound) return true;
+
+    return false;
+  }
+
+  async getEffectiveRosterLock(tournamentId: string): Promise<{ isLocked: boolean; lockTime: Date | null }> {
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      select: { rosterLockAt: true, startsAt: true },
+    });
+    if (!tournament) return { isLocked: false, lockTime: null };
+
+    let lockTime = tournament.rosterLockAt;
+    if (!lockTime) {
+      const firstMatch = await this.prisma.match.findFirst({
+        where: { tournamentId },
+        orderBy: { scheduledAt: 'asc' },
+        select: { scheduledAt: true },
+      });
+      lockTime = firstMatch?.scheduledAt ?? null;
+    }
+
+    const now = new Date();
+    if (lockTime && now >= lockTime) {
+      return { isLocked: true, lockTime };
+    }
+
+    const competitionStarted = await this.hasCompetitionStarted(tournamentId);
+    if (competitionStarted) {
+      return { isLocked: true, lockTime: lockTime ?? now };
+    }
+
+    return { isLocked: false, lockTime };
+  }
+
+  async assertRosterUnlocked(
+    teamId: string,
+    options?: { allowConfirmedSubstitute?: boolean; targetUserId?: string },
+  ): Promise<void> {
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
-      select: { registrationState: true },
+      include: {
+        members: true,
+        tournament: { select: { id: true, rosterLockAt: true, teamMode: true } },
+      },
     });
-    if (
-      team?.registrationState === TeamRegistrationState.CONFIRMED ||
-      team?.registrationState === TeamRegistrationState.WAITLISTED
-    ) {
+    if (!team) return;
+
+    if (team.registrationState === TeamRegistrationState.WAITLISTED) {
       throw new BadRequestException({
         code: 'TEAM_ROSTER_LOCKED',
         error_code: 'TEAM_ROSTER_LOCKED',
-        message: 'The team roster cannot be changed after tournament registration.',
+        message: 'The team roster cannot be changed while waitlisted.',
       });
     }
 
-    const registration = await this.prisma.tournamentRegistration.findFirst({
-      where: { teamId, status: RegistrationStatus.CONFIRMED },
-      select: { id: true },
-    });
-    if (registration) {
+    const isConfirmed =
+      team.registrationState === TeamRegistrationState.CONFIRMED ||
+      (await this.prisma.tournamentRegistration.findFirst({
+        where: { teamId, status: RegistrationStatus.CONFIRMED },
+        select: { id: true },
+      })) !== null;
+
+    if (isConfirmed && team.tournamentId) {
+      const { isLocked } = await this.getEffectiveRosterLock(team.tournamentId);
+      if (isLocked) {
+        throw new BadRequestException({
+          code: 'ROSTER_LOCKED_BY_TIME',
+          error_code: 'ROSTER_LOCKED_BY_TIME',
+          message: 'The roster is locked because the lock time has passed or the competition has started.',
+        });
+      }
+
+      if (options?.allowConfirmedSubstitute) {
+        return;
+      }
+
+      if (options?.targetUserId) {
+        const member = team.members.find((m) => m.userId === options.targetUserId);
+        if (member?.role === TeamMemberRole.SUBSTITUTE) {
+          return;
+        }
+      }
+
       throw new BadRequestException({
         code: 'TEAM_ROSTER_LOCKED',
         error_code: 'TEAM_ROSTER_LOCKED',
         message: 'The team roster cannot be changed after tournament registration.',
       });
     }
+  }
+
+  async requestRosterChange(userId: string, teamId: string, dto: RosterChangeDto): Promise<any> {
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      include: {
+        members: {
+          include: { user: { select: { id: true, name: true, profilePic: true } } },
+        },
+        tournament: true,
+      },
+    });
+
+    if (!team) {
+      throw new NotFoundException(`Team with ID '${teamId}' not found`);
+    }
+
+    if (team.captainId !== userId) {
+      throw new ForbiddenException({
+        status: 'error',
+        code: 'ONLY_LEADER_CAN_CHANGE_ROSTER',
+        message: 'Only the team leader can request a roster change',
+      });
+    }
+
+    if (!team.tournamentId || !team.tournament) {
+      throw new BadRequestException('This team is not associated with a tournament');
+    }
+
+    const isConfirmed =
+      team.registrationState === TeamRegistrationState.CONFIRMED ||
+      (await this.prisma.tournamentRegistration.findFirst({
+        where: { teamId, tournamentId: team.tournamentId, status: RegistrationStatus.CONFIRMED },
+        select: { id: true },
+      })) !== null;
+
+    if (!isConfirmed) {
+      throw new BadRequestException({
+        code: 'TEAM_NOT_CONFIRMED',
+        message: 'Roster changes can only be requested on confirmed teams',
+      });
+    }
+
+    const { isLocked, lockTime } = await this.getEffectiveRosterLock(team.tournamentId);
+    if (isLocked) {
+      throw new BadRequestException({
+        code: 'ROSTER_LOCKED_BY_TIME',
+        error_code: 'ROSTER_LOCKED_BY_TIME',
+        message: 'The roster is locked because the lock time has passed or competition has started.',
+      });
+    }
+
+    const existingPending = await this.prisma.registrationSubmission.findFirst({
+      where: {
+        teamId,
+        status: RegistrationSubmissionStatus.ACTIVE,
+        kind: RegistrationSubmissionKind.ROSTER_CHANGE,
+      },
+    });
+    if (existingPending) {
+      throw new BadRequestException({
+        code: 'ROSTER_CHANGE_PENDING',
+        error_code: 'ROSTER_CHANGE_PENDING',
+        message: 'A roster change request is already pending for this team.',
+      });
+    }
+
+    // Required count
+    const isDuo = team.tournament.teamMode === TeamMode.DUO;
+    const requiredMainCount = isDuo ? 2 : 4;
+    if (dto.main_user_ids.length !== requiredMainCount) {
+      throw new BadRequestException({
+        status: 'error',
+        code: 'INVALID_MEMBER_COUNT',
+        message: `Roster change requires exactly ${requiredMainCount} main players.`,
+      });
+    }
+
+    // Uniqueness
+    if (new Set(dto.main_user_ids).size !== dto.main_user_ids.length) {
+      throw new BadRequestException('Duplicate players in main_user_ids');
+    }
+
+    const memberMap = new Map(team.members.map((m) => [m.userId, m]));
+    for (const uid of dto.main_user_ids) {
+      if (!memberMap.has(uid)) {
+        throw new BadRequestException(`User ${uid} is not a member of this team`);
+      }
+    }
+
+    // Role constraints: LEADER_MUST_PLAY / MANAGER_CANNOT_PLAY
+    if (team.ownerRole === OwnerRole.LEADER) {
+      if (!dto.main_user_ids.includes(team.captainId)) {
+        throw new BadRequestException({
+          code: 'LEADER_MUST_PLAY',
+          error_code: 'LEADER_MUST_PLAY',
+          message: 'The team leader must be included in the playing roster',
+        });
+      }
+    } else if (team.ownerRole === OwnerRole.MANAGER) {
+      if (dto.main_user_ids.includes(team.captainId)) {
+        throw new BadRequestException({
+          code: 'MANAGER_CANNOT_PLAY',
+          error_code: 'MANAGER_CANNOT_PLAY',
+          message: 'The manager cannot be in the playing roster',
+        });
+      }
+    }
+
+    for (const m of team.members) {
+      if (m.role === TeamMemberRole.MANAGER && dto.main_user_ids.includes(m.userId)) {
+        throw new BadRequestException({
+          code: 'MANAGER_CANNOT_PLAY',
+          error_code: 'MANAGER_CANNOT_PLAY',
+          message: 'A manager cannot be in the playing roster',
+        });
+      }
+    }
+
+    // remove_user_ids validation
+    const removeIds = dto.remove_user_ids ?? [];
+    for (const rid of removeIds) {
+      if (!memberMap.has(rid)) {
+        throw new BadRequestException(`Remove target ${rid} is not a member of this team`);
+      }
+      if (dto.main_user_ids.includes(rid)) {
+        throw new BadRequestException(`Cannot remove user ${rid} while including them in main_user_ids`);
+      }
+      if (rid === team.captainId) {
+        throw new BadRequestException('Cannot remove the team captain');
+      }
+    }
+
+    // Substitute capacity check
+    const remainingMembers = team.members.filter(
+      (m) =>
+        !dto.main_user_ids.includes(m.userId) &&
+        !removeIds.includes(m.userId) &&
+        m.role !== TeamMemberRole.MANAGER,
+    );
+    const maxSubs = isDuo ? 0 : team.acceptingSubstitutes ? 1 : 0;
+    if (remainingMembers.length > maxSubs) {
+      throw new BadRequestException({
+        code: 'ROSTER_FULL',
+        error_code: 'ROSTER_FULL',
+        message: `Exceeds substitute capacity (maximum ${maxSubs} substitutes allowed)`,
+      });
+    }
+
+    // Check if any change actually requested
+    const currentPlayingIds = team.members
+      .filter((m) => m.role !== TeamMemberRole.SUBSTITUTE && m.role !== TeamMemberRole.MANAGER)
+      .map((m) => m.userId);
+
+    const isSamePlaying =
+      currentPlayingIds.length === dto.main_user_ids.length &&
+      currentPlayingIds.every((id) => dto.main_user_ids.includes(id));
+    const hasRemovals = removeIds.length > 0;
+
+    if (isSamePlaying && !hasRemovals) {
+      throw new BadRequestException({
+        code: 'NO_ROSTER_CHANGE',
+        error_code: 'NO_ROSTER_CHANGE',
+        message: 'No changes detected in playing roster or removed members',
+      });
+    }
+
+    // Newly added playing players needing approval
+    const addedPlayingIds = dto.main_user_ids.filter((id) => !currentPlayingIds.includes(id));
+
+    // If nobody new needs approval (e.g. only removing a substitute) -> apply immediately!
+    if (addedPlayingIds.length === 0) {
+      const newRosterVersion = team.rosterVersion + 1;
+      await this.prisma.$transaction(
+        async (tx) => {
+          await tx.team.update({
+            where: { id: team.id },
+            data: { rosterVersion: newRosterVersion },
+          });
+
+          for (const m of team.members) {
+            if (removeIds.includes(m.userId)) {
+              await tx.teamMember.delete({
+                where: { unique_team_user: { teamId: team.id, userId: m.userId } },
+              });
+            } else if (dto.main_user_ids.includes(m.userId)) {
+              const newRole =
+                m.userId === team.captainId && team.ownerRole === OwnerRole.LEADER
+                  ? TeamMemberRole.CAPTAIN
+                  : TeamMemberRole.PLAYER;
+              if (m.role !== newRole) {
+                await tx.teamMember.update({
+                  where: { unique_team_user: { teamId: team.id, userId: m.userId } },
+                  data: { role: newRole },
+                });
+              }
+            } else if (m.role !== TeamMemberRole.MANAGER) {
+              if (m.role !== TeamMemberRole.SUBSTITUTE) {
+                await tx.teamMember.update({
+                  where: { unique_team_user: { teamId: team.id, userId: m.userId } },
+                  data: { role: TeamMemberRole.SUBSTITUTE },
+                });
+              }
+            }
+          }
+
+          await tx.tournamentAuditLog.create({
+            data: {
+              tournamentId: team.tournamentId!,
+              action: 'ROSTER_CHANGE_APPLIED',
+              details: {
+                teamId: team.id,
+                rosterVersion: newRosterVersion,
+                playingUserIds: dto.main_user_ids,
+                removeUserIds: removeIds,
+                appliedImmediately: true,
+              },
+              adminUserId: userId,
+            },
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+
+      const allMemberIds = team.members
+        .filter((m) => !removeIds.includes(m.userId))
+        .map((m) => m.userId);
+
+      this.events?.emit('team.roster_change_applied', {
+        memberUserIds: allMemberIds,
+        teamId: team.id,
+        tournamentId: team.tournamentId!,
+        tournamentTitle: team.tournament.title,
+        teamName: team.name,
+        rosterVersion: newRosterVersion,
+      });
+
+      return {
+        success: true,
+        applied_immediately: true,
+        roster_version: newRosterVersion,
+        message: 'Roster change applied immediately',
+      };
+    }
+
+    // Newly added players need approval -> create ROSTER_CHANGE submission
+    const submission = await this.prisma.registrationSubmission.create({
+      data: {
+        tournamentId: team.tournamentId!,
+        teamId: team.id,
+        rosterVersion: team.rosterVersion,
+        submittedBy: userId,
+        ownerUserId: team.captainId,
+        playingUserIds: dto.main_user_ids,
+        removeUserIds: removeIds,
+        kind: RegistrationSubmissionKind.ROSTER_CHANGE,
+        status: RegistrationSubmissionStatus.ACTIVE,
+        approvals: {
+          create: addedPlayingIds.map((uid) => ({
+            userId: uid,
+            status: RegistrationApprovalStatus.PENDING,
+          })),
+        },
+      },
+      include: {
+        approvals: { include: { user: { select: { id: true, name: true, profilePic: true } } } },
+      },
+    });
+
+    for (const app of submission.approvals) {
+      this.events?.emit('team.roster_change_requested', {
+        approvalId: app.id,
+        approverUserId: app.userId,
+        tournamentId: team.tournamentId!,
+        tournamentTitle: team.tournament.title,
+        teamId: team.id,
+        teamName: team.name,
+        ownerName: team.members.find((m) => m.userId === team.captainId)?.user?.name || 'Leader',
+        kind: 'ROSTER_CHANGE',
+      });
+    }
+
+    return {
+      success: true,
+      applied_immediately: false,
+      submission_id: submission.id,
+      pending_approvals_count: addedPlayingIds.length,
+      new_roster_version: team.rosterVersion + 1,
+      expires_at: lockTime,
+      message: 'Roster change request created; waiting for player approvals',
+    };
+  }
+
+  async cancelRosterChange(userId: string, teamId: string): Promise<any> {
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      select: { captainId: true },
+    });
+    if (!team) {
+      throw new NotFoundException(`Team with ID '${teamId}' not found`);
+    }
+    if (team.captainId !== userId) {
+      throw new ForbiddenException('Only the team captain can cancel roster change');
+    }
+
+    const submission = await this.prisma.registrationSubmission.findFirst({
+      where: {
+        teamId,
+        status: RegistrationSubmissionStatus.ACTIVE,
+        kind: RegistrationSubmissionKind.ROSTER_CHANGE,
+      },
+    });
+    if (!submission) {
+      throw new NotFoundException('No active roster change request found');
+    }
+
+    await this.prisma.registrationSubmission.update({
+      where: { id: submission.id },
+      data: {
+        status: RegistrationSubmissionStatus.CANCELLED,
+        cancelledAt: new Date(),
+      },
+    });
+
+    return { success: true, message: 'Roster change request cancelled' };
   }
 }

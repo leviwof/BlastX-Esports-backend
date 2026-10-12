@@ -14,9 +14,11 @@ import {
   OwnerRole,
   RegistrationStatus,
   TeamRegistrationState,
+  RegistrationSubmissionKind,
   RegistrationSubmissionStatus,
   RegistrationApprovalStatus,
   WaitlistEntryStatus,
+  MatchStatus,
   SquadRole,
   SquadRosterType,
 } from '@prisma/client';
@@ -417,6 +419,20 @@ export class RegistrationService {
       }
     }
 
+    await tx.tournamentAuditLog.create({
+      data: {
+        tournamentId,
+        action: 'SLOT_ALLOCATED',
+        details: {
+          teamId: teamId ?? null,
+          userId,
+          slotNumber,
+          teamMode: tournament.teamMode,
+        },
+        adminUserId: userId,
+      },
+    });
+
     const slotUserIds = registeredTeam
       ? registeredTeam.members.map((m: any) => m.userId)
       : [userId];
@@ -541,19 +557,21 @@ export class RegistrationService {
       });
     }
 
-    const userSquadMember = await this.prisma.squadMember.findUnique({
-      where: { userId },
-    });
-    if (
-      userSquadMember &&
-      userSquadMember.role !== SquadRole.LEADER &&
-      userSquadMember.role !== SquadRole.MANAGER
-    ) {
-      throw new ForbiddenException({
-        status: 'error',
-        error_code: 'NON_LEADER_REGISTRATION_FORBIDDEN',
-        message: 'please ask team leader to register the tournament',
+    if (tournament.teamMode === TeamMode.SQUAD) {
+      const userSquadMember = await this.prisma.squadMember.findUnique({
+        where: { userId },
       });
+      if (
+        userSquadMember &&
+        userSquadMember.role !== SquadRole.LEADER &&
+        userSquadMember.role !== SquadRole.MANAGER
+      ) {
+        throw new ForbiddenException({
+          status: 'error',
+          error_code: 'NON_LEADER_REGISTRATION_FORBIDDEN',
+          message: 'please ask team leader to register the tournament',
+        });
+      }
     }
 
     // Check if team is already CONFIRMED -> Idempotent return
@@ -824,9 +842,19 @@ export class RegistrationService {
               status: RegistrationApprovalStatus.PENDING,
               submission: {
                 status: RegistrationSubmissionStatus.ACTIVE,
-                team: {
-                  registrationState: TeamRegistrationState.PENDING_PLAYER_APPROVAL,
-                },
+                OR: [
+                  {
+                    team: {
+                      registrationState: TeamRegistrationState.PENDING_PLAYER_APPROVAL,
+                    },
+                  },
+                  {
+                    kind: RegistrationSubmissionKind.ROSTER_CHANGE,
+                    team: {
+                      registrationState: TeamRegistrationState.CONFIRMED,
+                    },
+                  },
+                ],
               },
             }
           : {}),
@@ -879,6 +907,7 @@ export class RegistrationService {
 
       return {
         id: approval.id,
+        kind: sub.kind ?? 'REGISTRATION',
         status: approval.status,
         roster_version: sub.rosterVersion,
         created_at: approval.createdAt,
@@ -964,6 +993,7 @@ export class RegistrationService {
 
     return {
       id: approval.id,
+      kind: sub.kind ?? 'REGISTRATION',
       status: approval.status,
       roster_version: sub.rosterVersion,
       created_at: approval.createdAt,
@@ -1060,36 +1090,89 @@ export class RegistrationService {
           });
         }
 
-        if (team.registrationState !== TeamRegistrationState.PENDING_PLAYER_APPROVAL) {
-          throw new BadRequestException({
-            code: 'REGISTRATION_NOT_PENDING',
-            error_code: 'REGISTRATION_NOT_PENDING',
-            message: `Team registration is not pending player approval (current state: ${team.registrationState})`,
-          });
-        }
+        const isRosterChange = submission.kind === RegistrationSubmissionKind.ROSTER_CHANGE;
 
-        if (tournament.status !== TournamentStatus.LIVE) {
-          throw new BadRequestException({
-            code: 'TOURNAMENT_NOT_LIVE',
-            error_code: 'TOURNAMENT_NOT_LIVE',
-            message: 'Tournament is not LIVE',
-          });
-        }
+        if (isRosterChange) {
+          if (team.registrationState !== TeamRegistrationState.CONFIRMED) {
+            throw new BadRequestException({
+              code: 'REGISTRATION_NOT_CONFIRMED',
+              error_code: 'REGISTRATION_NOT_CONFIRMED',
+              message: `Team registration is not CONFIRMED (current state: ${team.registrationState})`,
+            });
+          }
 
-        const isPlayingMember =
-          submission.playingUserIds.includes(userId) &&
-          team.members.some(
-            (m) =>
-              m.userId === userId &&
-              m.role !== TeamMemberRole.SUBSTITUTE &&
-              m.role !== TeamMemberRole.MANAGER,
-          );
-        if (!isPlayingMember) {
-          throw new BadRequestException({
-            code: 'NOT_PLAYING_MEMBER',
-            error_code: 'NOT_PLAYING_MEMBER',
-            message: 'User is not currently an active player in the playing roster',
+          let lockTime = tournament.rosterLockAt;
+          if (!lockTime) {
+            const firstMatch = await tx.match.findFirst({
+              where: { tournamentId: tournament.id },
+              orderBy: { scheduledAt: 'asc' },
+              select: { scheduledAt: true },
+            });
+            lockTime = firstMatch?.scheduledAt ?? null;
+          }
+          if (lockTime && new Date() >= lockTime) {
+            throw new BadRequestException({
+              code: 'ROSTER_LOCKED_BY_TIME',
+              error_code: 'ROSTER_LOCKED_BY_TIME',
+              message: 'The roster is locked because the lock time has passed',
+            });
+          }
+
+          const hasStarted = await tx.match.findFirst({
+            where: {
+              tournamentId: tournament.id,
+              status: { in: [MatchStatus.LIVE, MatchStatus.COMPLETED] },
+            },
+            select: { id: true },
           });
+          if (hasStarted) {
+            throw new BadRequestException({
+              code: 'ROSTER_LOCKED_BY_TIME',
+              error_code: 'ROSTER_LOCKED_BY_TIME',
+              message: 'The roster is locked because competition has started',
+            });
+          }
+
+          const isMember = team.members.some((m) => m.userId === userId);
+          if (!isMember) {
+            throw new BadRequestException({
+              code: 'NOT_TEAM_MEMBER',
+              error_code: 'NOT_TEAM_MEMBER',
+              message: 'User is not currently a member of this team',
+            });
+          }
+        } else {
+          if (team.registrationState !== TeamRegistrationState.PENDING_PLAYER_APPROVAL) {
+            throw new BadRequestException({
+              code: 'REGISTRATION_NOT_PENDING',
+              error_code: 'REGISTRATION_NOT_PENDING',
+              message: `Team registration is not pending player approval (current state: ${team.registrationState})`,
+            });
+          }
+
+          if (tournament.status !== TournamentStatus.LIVE) {
+            throw new BadRequestException({
+              code: 'TOURNAMENT_NOT_LIVE',
+              error_code: 'TOURNAMENT_NOT_LIVE',
+              message: 'Tournament is not LIVE',
+            });
+          }
+
+          const isPlayingMember =
+            submission.playingUserIds.includes(userId) &&
+            team.members.some(
+              (m) =>
+                m.userId === userId &&
+                m.role !== TeamMemberRole.SUBSTITUTE &&
+                m.role !== TeamMemberRole.MANAGER,
+            );
+          if (!isPlayingMember) {
+            throw new BadRequestException({
+              code: 'NOT_PLAYING_MEMBER',
+              error_code: 'NOT_PLAYING_MEMBER',
+              message: 'User is not currently an active player in the playing roster',
+            });
+          }
         }
 
         // Mark APPROVED
@@ -1109,7 +1192,7 @@ export class RegistrationService {
             actorUserId: userId,
             eventType: 'APPROVAL_APPROVED',
             rosterVersion: team.rosterVersion,
-            details: { approvalId },
+            details: { approvalId, kind: submission.kind },
           },
         });
 
@@ -1119,14 +1202,93 @@ export class RegistrationService {
         );
 
         let finalizationResult: any = null;
+        let newRosterVersion = team.rosterVersion;
+
         if (allApproved) {
-          finalizationResult = await this.finalizeRegistration(
-            tx,
-            tournament.id,
-            team.id,
-            team.captainId,
-            submission.id,
-          );
+          if (isRosterChange) {
+            newRosterVersion = team.rosterVersion + 1;
+            // 1. Swap roles and remove members atomically
+            for (const m of team.members) {
+              if (submission.removeUserIds.includes(m.userId)) {
+                await tx.teamMember.delete({
+                  where: { unique_team_user: { teamId: team.id, userId: m.userId } },
+                });
+              } else if (submission.playingUserIds.includes(m.userId)) {
+                const newRole =
+                  m.userId === team.captainId && team.ownerRole === OwnerRole.LEADER
+                    ? TeamMemberRole.CAPTAIN
+                    : TeamMemberRole.PLAYER;
+                if (m.role !== newRole) {
+                  await tx.teamMember.update({
+                    where: { unique_team_user: { teamId: team.id, userId: m.userId } },
+                    data: { role: newRole },
+                  });
+                }
+              } else if (m.role !== TeamMemberRole.MANAGER) {
+                if (m.role !== TeamMemberRole.SUBSTITUTE) {
+                  await tx.teamMember.update({
+                    where: { unique_team_user: { teamId: team.id, userId: m.userId } },
+                    data: { role: TeamMemberRole.SUBSTITUTE },
+                  });
+                }
+              }
+            }
+
+            // 2. Increment team roster version
+            await tx.team.update({
+              where: { id: team.id },
+              data: { rosterVersion: newRosterVersion },
+            });
+
+            // 3. Mark submission COMPLETED
+            await tx.registrationSubmission.update({
+              where: { id: submission.id },
+              data: {
+                status: RegistrationSubmissionStatus.COMPLETED,
+                completedAt: new Date(),
+              },
+            });
+
+            // 4. Log audit log
+            await tx.tournamentAuditLog.create({
+              data: {
+                tournamentId: tournament.id,
+                action: 'ROSTER_CHANGE_APPLIED',
+                details: {
+                  teamId: team.id,
+                  rosterVersion: newRosterVersion,
+                  playingUserIds: submission.playingUserIds,
+                  removeUserIds: submission.removeUserIds,
+                  submissionId: submission.id,
+                },
+                adminUserId: team.captainId,
+              },
+            });
+
+            // 5. Log registration event
+            await tx.registrationEvent.create({
+              data: {
+                tournamentId: tournament.id,
+                teamId: team.id,
+                submissionId: submission.id,
+                actorUserId: userId,
+                eventType: 'ROSTER_CHANGE_APPLIED',
+                rosterVersion: newRosterVersion,
+                details: {
+                  playingUserIds: submission.playingUserIds,
+                  removeUserIds: submission.removeUserIds,
+                },
+              },
+            });
+          } else {
+            finalizationResult = await this.finalizeRegistration(
+              tx,
+              tournament.id,
+              team.id,
+              team.captainId,
+              submission.id,
+            );
+          }
         }
 
         return {
@@ -1134,6 +1296,9 @@ export class RegistrationService {
           finalizationResult,
           team,
           tournament,
+          submission,
+          isRosterChange,
+          newRosterVersion,
         };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -1146,6 +1311,31 @@ export class RegistrationService {
       teamId: result.team.id,
       action: 'approval_approved',
     });
+
+    if (result.isRosterChange) {
+      if (result.allApproved) {
+        const remainingMembers = await this.prisma.teamMember.findMany({
+          where: { teamId: result.team.id },
+          select: { userId: true },
+        });
+        this.events.emit('team.roster_change_applied', {
+          teamId: result.team.id,
+          tournamentId: result.tournament.id,
+          tournamentTitle: result.tournament.title,
+          teamName: result.team.name,
+          rosterVersion: result.newRosterVersion,
+          memberUserIds: remainingMembers.map((m) => m.userId),
+        });
+      }
+
+      return {
+        success: true,
+        status: 'APPROVED',
+        all_approved: result.allApproved,
+        registration_state: TeamRegistrationState.CONFIRMED,
+        roster_version: result.newRosterVersion,
+      };
+    }
 
     const finalState = result.allApproved
       ? result.finalizationResult?.status ?? 'CONFIRMED'
@@ -1224,6 +1414,63 @@ export class RegistrationService {
           });
         }
 
+        const isRosterChange = submission.kind === RegistrationSubmissionKind.ROSTER_CHANGE;
+
+        if (isRosterChange) {
+          if (team.registrationState !== TeamRegistrationState.CONFIRMED) {
+            throw new BadRequestException({
+              code: 'REGISTRATION_NOT_CONFIRMED',
+              error_code: 'REGISTRATION_NOT_CONFIRMED',
+              message: `Team registration is not CONFIRMED (current state: ${team.registrationState})`,
+            });
+          }
+
+          // Mark DECLINED
+          await tx.registrationApproval.update({
+            where: { id: approvalId },
+            data: {
+              status: RegistrationApprovalStatus.DECLINED,
+              respondedAt: new Date(),
+            },
+          });
+
+          // Cancel submission, keep team CONFIRMED
+          await tx.registrationSubmission.update({
+            where: { id: submission.id },
+            data: {
+              status: RegistrationSubmissionStatus.CANCELLED,
+              cancelledAt: new Date(),
+            },
+          });
+
+          await tx.tournamentAuditLog.create({
+            data: {
+              tournamentId: tournament.id,
+              action: 'ROSTER_CHANGE_DECLINED',
+              details: {
+                submissionId: submission.id,
+                teamId: team.id,
+                declinedByUserId: userId,
+              },
+              adminUserId: userId,
+            },
+          });
+
+          await tx.registrationEvent.create({
+            data: {
+              tournamentId: tournament.id,
+              teamId: team.id,
+              submissionId: submission.id,
+              actorUserId: userId,
+              eventType: 'ROSTER_CHANGE_DECLINED',
+              rosterVersion: team.rosterVersion,
+              details: { approvalId, declinedByUserId: userId },
+            },
+          });
+
+          return { team, tournament, submission, isRosterChange: true };
+        }
+
         if (team.registrationState !== TeamRegistrationState.PENDING_PLAYER_APPROVAL) {
           throw new BadRequestException({
             code: 'REGISTRATION_NOT_PENDING',
@@ -1285,7 +1532,7 @@ export class RegistrationService {
           },
         });
 
-        return { team, tournament };
+        return { team, tournament, submission, isRosterChange: false };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
@@ -1297,6 +1544,25 @@ export class RegistrationService {
       teamId: result.team.id,
       action: 'approval_declined',
     });
+
+    if (result.isRosterChange) {
+      this.events.emit('team.roster_change_declined', {
+        ownerUserId: result.team.captainId,
+        tournamentId: result.tournament.id,
+        tournamentTitle: result.tournament.title,
+        teamId: result.team.id,
+        teamName: result.team.name,
+        declinedByUserId: userId,
+        submissionId: result.submission.id,
+      });
+
+      return {
+        success: true,
+        status: 'DECLINED',
+        registration_state: TeamRegistrationState.CONFIRMED,
+        message: 'Roster change request cancelled due to player decline',
+      };
+    }
 
     this.events.emit('registration.roster_change_required', {
       ownerUserId: result.team.captainId,
@@ -1383,6 +1649,19 @@ export class RegistrationService {
             eventType: 'SUBMISSION_CANCELLED',
             rosterVersion: team.rosterVersion,
             details: { reason: 'Cancelled by owner' },
+          },
+        });
+
+        await tx.tournamentAuditLog.create({
+          data: {
+            tournamentId,
+            action: 'REGISTRATION_CANCELLED',
+            details: {
+              teamId,
+              submissionId: activeSubmission?.id ?? null,
+              reason: 'Cancelled by owner',
+            },
+            adminUserId: userId,
           },
         });
 
@@ -1824,6 +2103,19 @@ export class RegistrationService {
             eventType: 'WAITLIST_PROMOTED',
             rosterVersion: team.rosterVersion ?? 1,
             details: { slotNumber },
+          },
+        });
+
+        await tx.tournamentAuditLog.create({
+          data: {
+            tournamentId,
+            action: 'SLOT_PROMOTED',
+            details: {
+              teamId: team.id,
+              slotNumber,
+              waitlistEntryId: nextWaiting.id,
+            },
+            adminUserId: 'SYSTEM',
           },
         });
 

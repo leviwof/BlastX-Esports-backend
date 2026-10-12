@@ -72,6 +72,8 @@ export interface TournamentResponse {
   rules: any;
   registration_opens_at: Date;
   registration_closes_at: Date;
+  roster_lock_at?: Date | null;
+  rosterLockAt?: Date | null;
   starts_at: Date;
   startsAt?: Date;
   status: string;
@@ -243,6 +245,8 @@ export const toTournamentResponse = (
     rules: t.rules,
     registration_opens_at: t.registrationOpensAt,
     registration_closes_at: t.registrationClosesAt,
+    roster_lock_at: (t as any).rosterLockAt ?? null,
+    rosterLockAt: (t as any).rosterLockAt ?? null,
     starts_at: t.startsAt,
     startsAt: t.startsAt,
     status: t.status,

@@ -97,11 +97,17 @@ enum TeamJoinRequestStatus {
   CANCELLED
 }
 
+enum RegistrationSubmissionKind {
+  REGISTRATION
+  ROSTER_CHANGE
+}
+
 enum RegistrationSubmissionStatus {
   ACTIVE
   SUPERSEDED
   CANCELLED
   COMPLETED
+  EXPIRED
 }
 
 enum RegistrationApprovalStatus {
@@ -298,8 +304,11 @@ model RegistrationSubmission {
   submittedBy    String                       @map("submitted_by")
   ownerUserId    String                       @map("owner_user_id")
   playingUserIds String[]                     @map("playing_user_ids")
+  removeUserIds  String[]                     @default([]) @map("remove_user_ids")
+  kind           RegistrationSubmissionKind   @default(REGISTRATION)
   status         RegistrationSubmissionStatus @default(ACTIVE)
   createdAt      DateTime                     @default(now()) @map("created_at")
+  cancelledAt    DateTime?                    @map("cancelled_at")
   completedAt    DateTime?                    @map("completed_at")
 
   tournament     Tournament                   @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
@@ -379,6 +388,7 @@ model Tournament {
   rules                Json?
   registrationOpensAt  DateTime          @map("registration_opens_at")
   registrationClosesAt DateTime          @map("registration_closes_at")
+  rosterLockAt         DateTime?         @map("roster_lock_at")
   startsAt             DateTime          @map("starts_at")
   status               TournamentStatus  @default(DRAFT)
   section              TournamentSection @default(BLASTX)

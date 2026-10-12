@@ -1,13 +1,20 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable, Logger, Optional, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { JwtUser } from './current-user.decorator';
 import { IS_PUBLIC_KEY } from './public.decorator';
+import { RedisService } from '../redis/redis.service';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private readonly jwt: JwtService, private readonly reflector: Reflector) {}
+  private readonly logger = new Logger(JwtAuthGuard.name);
+
+  constructor(
+    private readonly jwt: JwtService,
+    private readonly reflector: Reflector,
+    @Optional() private readonly redis?: RedisService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
@@ -19,8 +26,28 @@ export class JwtAuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request & { user?: JwtUser }>();
     const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
     if (!token) throw new UnauthorizedException('Unauthorized or invalid token');
-    try { request.user = await this.jwt.verifyAsync<JwtUser>(token); return true; }
-    catch { throw new UnauthorizedException('Unauthorized or invalid token'); }
+
+    // Check blacklist in Redis (bl_<token>)
+    if (this.redis?.client) {
+      try {
+        const isBlacklisted = await this.redis.client.get(`bl_${token}`);
+        if (isBlacklisted) {
+          throw new UnauthorizedException('Token has been revoked');
+        }
+      } catch (err: any) {
+        if (err instanceof UnauthorizedException) {
+          throw err;
+        }
+        this.logger.warn(`Redis blacklist check failed, failing open: ${err.message}`);
+      }
+    }
+
+    try {
+      request.user = await this.jwt.verifyAsync<JwtUser>(token);
+      return true;
+    } catch {
+      throw new UnauthorizedException('Unauthorized or invalid token');
+    }
   }
 }
 

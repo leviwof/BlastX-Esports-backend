@@ -48,6 +48,7 @@ import { SquadsService } from '../squads/squads.service';
 import { MatchAccessService } from '../matches/match-access.service';
 
 import { RegistrationService } from './registration.service';
+import { AuditService } from './audit.service';
 
 @Injectable()
 export class TournamentsService implements OnModuleInit {
@@ -58,6 +59,7 @@ export class TournamentsService implements OnModuleInit {
     @Optional() private readonly squadsService?: SquadsService,
     @Optional() private readonly registrationService?: RegistrationService,
     @Optional() private readonly matchAccess?: MatchAccessService,
+    @Optional() private readonly auditService?: AuditService,
   ) {}
 
   async onModuleInit() {
@@ -230,6 +232,7 @@ export class TournamentsService implements OnModuleInit {
         rules: dto.rules || null,
         registrationOpensAt: regOpen,
         registrationClosesAt: regClose,
+        rosterLockAt: dto.roster_lock_at ? new Date(dto.roster_lock_at) : null,
         startsAt,
         status: TournamentStatus.DRAFT,
         section: dto.section ?? TournamentSection.BLASTX,
@@ -266,6 +269,7 @@ export class TournamentsService implements OnModuleInit {
     if (dto.rules !== undefined) data.rules = dto.rules;
     if (dto.registration_opens_at) data.registrationOpensAt = new Date(dto.registration_opens_at);
     if (dto.registration_closes_at) data.registrationClosesAt = new Date(dto.registration_closes_at);
+    if (dto.roster_lock_at !== undefined) data.rosterLockAt = dto.roster_lock_at ? new Date(dto.roster_lock_at) : null;
     if (dto.starts_at) data.startsAt = new Date(dto.starts_at);
     if (dto.stream_url !== undefined || dto.streamUrl !== undefined) data.streamUrl = dto.stream_url || dto.streamUrl || null;
     if (dto.viewers_count !== undefined || dto.viewersCount !== undefined) data.viewersCount = dto.viewers_count ?? dto.viewersCount;
@@ -295,6 +299,13 @@ export class TournamentsService implements OnModuleInit {
       }
     }
 
+    await this.auditService?.log({
+      tournamentId,
+      action: 'TOURNAMENT_UPDATED',
+      actorUserId: adminId,
+      details: { ...data },
+    });
+
     return updated;
   }
 
@@ -305,6 +316,13 @@ export class TournamentsService implements OnModuleInit {
     const updated = await this.prisma.tournament.update({
       where: { id: tournamentId },
       data: { status: newStatus },
+    });
+
+    await this.auditService?.log({
+      tournamentId,
+      action: 'STATUS_CHANGED',
+      actorUserId: adminId,
+      details: { oldStatus: tournament.status, newStatus },
     });
 
     this.eventEmitter.emit('status.changed', {
@@ -420,6 +438,18 @@ export class TournamentsService implements OnModuleInit {
         this.eventEmitter.emit('tournament.slot_freed', { tournamentId });
       }
     }
+
+    await this.auditService?.log({
+      tournamentId,
+      action: 'REGISTRATION_DISQUALIFIED',
+      actorUserId: adminId,
+      details: {
+        registrationId: dto.registration_id,
+        teamId: registration.teamId,
+        userId: registration.userId,
+        reason: dto.reason ?? 'Admin disqualified registration',
+      },
+    });
 
     return updated;
   }
@@ -690,19 +720,21 @@ export class TournamentsService implements OnModuleInit {
         });
       }
 
-      const userSquadMember = await this.prisma.squadMember.findUnique({
-        where: { userId },
-      });
-      if (
-        userSquadMember &&
-        userSquadMember.role !== SquadRole.LEADER &&
-        userSquadMember.role !== SquadRole.MANAGER
-      ) {
-        throw new ForbiddenException({
-          status: 'error',
-          error_code: 'NON_LEADER_REGISTRATION_FORBIDDEN',
-          message: 'please ask team leader to register the tournament',
+      if (tournament.teamMode === TeamMode.SQUAD) {
+        const userSquadMember = await this.prisma.squadMember.findUnique({
+          where: { userId },
         });
+        if (
+          userSquadMember &&
+          userSquadMember.role !== SquadRole.LEADER &&
+          userSquadMember.role !== SquadRole.MANAGER
+        ) {
+          throw new ForbiddenException({
+            status: 'error',
+            error_code: 'NON_LEADER_REGISTRATION_FORBIDDEN',
+            message: 'please ask team leader to register the tournament',
+          });
+        }
       }
 
       const mainMembers = team.members.filter(
@@ -1743,20 +1775,22 @@ export class TournamentsService implements OnModuleInit {
       throw new BadRequestException(`Team name '${cleanName}' is already taken for this game`);
     }
 
-    const userSquadMember = await this.prisma.squadMember.findUnique({
-      where: { userId },
-    });
-    if (
-      userSquadMember &&
-      userSquadMember.role !== SquadRole.LEADER &&
-      userSquadMember.role !== SquadRole.MANAGER
-    ) {
-      throw new ForbiddenException({
-        status: 'error',
-        code: 'NON_LEADER_REGISTRATION_FORBIDDEN',
-        error_code: 'NON_LEADER_REGISTRATION_FORBIDDEN',
-        message: 'please ask team leader to register the tournament',
+    if (tournament.teamMode === TeamMode.SQUAD) {
+      const userSquadMember = await this.prisma.squadMember.findUnique({
+        where: { userId },
       });
+      if (
+        userSquadMember &&
+        userSquadMember.role !== SquadRole.LEADER &&
+        userSquadMember.role !== SquadRole.MANAGER
+      ) {
+        throw new ForbiddenException({
+          status: 'error',
+          code: 'NON_LEADER_REGISTRATION_FORBIDDEN',
+          error_code: 'NON_LEADER_REGISTRATION_FORBIDDEN',
+          message: 'please ask team leader to register the tournament',
+        });
+      }
     }
 
     const existingTournamentMembership = await this.prisma.teamMember.findFirst({
@@ -1818,7 +1852,23 @@ export class TournamentsService implements OnModuleInit {
       inviteCode = randomBytes(4).toString('hex').toUpperCase();
     }
 
-    const ownerRole = dto.owner_role || dto.ownerRole || OwnerRole.LEADER;
+    let ownerRole = dto.owner_role || dto.ownerRole || OwnerRole.LEADER;
+    let acceptingSubstitutes = dto.accepting_substitutes ?? true;
+
+    if (tournament.teamMode === TeamMode.DUO) {
+      const requestedOwnerRole = dto.owner_role || dto.ownerRole;
+      if (requestedOwnerRole === OwnerRole.MANAGER) {
+        throw new BadRequestException({
+          status: 'error',
+          code: 'DUO_NO_MANAGER',
+          error_code: 'DUO_NO_MANAGER',
+          message: 'Duo teams cannot have a manager; owner must be a leader player.',
+        });
+      }
+      ownerRole = OwnerRole.LEADER;
+      acceptingSubstitutes = false;
+    }
+
     const initialRole = ownerRole === OwnerRole.MANAGER ? TeamMemberRole.MANAGER : TeamMemberRole.CAPTAIN;
 
     const team = await this.prisma.team.create({
@@ -1828,7 +1878,7 @@ export class TournamentsService implements OnModuleInit {
         name: cleanName,
         tag: cleanTag,
         logoUrl: sanitizedLogoUrl,
-        acceptingSubstitutes: dto.accepting_substitutes ?? true,
+        acceptingSubstitutes,
         captainId: userId,
         ownerRole,
         inviteCode,
@@ -1851,7 +1901,7 @@ export class TournamentsService implements OnModuleInit {
       },
     });
 
-    if (this.squadsService) {
+    if (this.squadsService && tournament.teamMode !== TeamMode.DUO) {
       await this.squadsService.syncTeamToSquad(team.id);
     }
 

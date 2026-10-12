@@ -8,9 +8,10 @@ import { JoinTeamDto } from './dto/join-team.dto';
 import { SubstitutesToggleDto } from './dto/substitutes-toggle.dto';
 import { TransferCaptainDto } from './dto/transfer-captain.dto';
 import { UpdatePlayingRosterDto } from './dto/update-playing-roster.dto';
+import { RosterChangeDto } from './dto/roster-change.dto';
 import { toTeamResponse, TeamResponse } from './team.mapper';
 
-@Controller(['teams', 'api/teams', 'tournaments/teams', 'api/tournaments/teams', 'v1/tournaments/teams'])
+@Controller(['teams', 'v1/teams', 'api/teams', 'tournaments/teams', 'api/tournaments/teams', 'v1/tournaments/teams'])
 @UseGuards(JwtAuthGuard)
 export class TeamsController {
   constructor(private readonly teamsService: TeamsService) {}
@@ -143,6 +144,23 @@ export class TeamsController {
   ): Promise<TeamResponse> {
     const team = await this.teamsService.updatePlayingRoster(user.sub, teamId, dto.main_user_ids);
     return toTeamResponse(team, user.sub);
+  }
+
+  @Post(':id/roster-change')
+  async requestRosterChange(
+    @CurrentUser() user: JwtUser,
+    @Param('id') teamId: string,
+    @Body() dto: RosterChangeDto,
+  ) {
+    return this.teamsService.requestRosterChange(user.sub, teamId, dto);
+  }
+
+  @Post(':id/roster-change/cancel')
+  async cancelRosterChange(
+    @CurrentUser() user: JwtUser,
+    @Param('id') teamId: string,
+  ) {
+    return this.teamsService.cancelRosterChange(user.sub, teamId);
   }
 
   @Patch(':id')

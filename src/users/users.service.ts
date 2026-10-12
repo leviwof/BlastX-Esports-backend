@@ -129,10 +129,22 @@ export class UsersService {
   async updateUserProfile(userId: string, dto: UpdateUserDto): Promise<User> {
     const data: Prisma.UserUpdateInput = {};
     if (dto.name !== undefined) {
+      // TODO: Unique profile name policy is not decided yet. Duplicate profile names are currently allowed.
       data.name = dto.name.trim();
     }
     if (dto.phone !== undefined) {
-      data.phone = dto.phone === null ? null : dto.phone.trim();
+      if (dto.phone === null || dto.phone.trim() === '') {
+        data.phone = null;
+      } else {
+        const raw = dto.phone.trim();
+        const hasPlus = raw.startsWith('+');
+        const digitsOnly = raw.replace(/\D/g, '');
+        if (digitsOnly.length < 10 || digitsOnly.length > 15) {
+          throw new BadRequestException('phone must contain between 10 and 15 digits');
+        }
+        // TODO: Unique phone number policy is not decided yet. Duplicate phone numbers and profile names are currently allowed.
+        data.phone = hasPlus ? `+${digitsOnly}` : digitsOnly;
+      }
     }
     const pic = dto.profile_pic !== undefined ? dto.profile_pic : dto.profilePic;
     if (pic !== undefined) {

@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConfigService } from '@nestjs/config';
-import { MatchStatus, TournamentInvitationStatus, TournamentStatus, WaitlistEntryStatus } from '@prisma/client';
+import { MatchStatus, RegistrationSubmissionKind, RegistrationSubmissionStatus, TournamentInvitationStatus, TournamentStatus, WaitlistEntryStatus } from '@prisma/client';
 import { Queue, Worker } from 'bullmq';
 import * as net from 'net';
 import { RecordingsService } from '../recordings/recordings.service';
@@ -285,11 +285,75 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     }
 
     const completed = await this.prisma.tournament.findMany({
-      where: { status: TournamentStatus.LIVE, matches: { some: {}, every: { status: TournamentStatus.COMPLETED } } },
+      where: { status: TournamentStatus.LIVE, matches: { some: {}, every: { status: MatchStatus.COMPLETED } } },
     });
     for (const t of completed) {
       await this.prisma.tournament.update({ where: { id: t.id }, data: { status: TournamentStatus.COMPLETED } });
       this.eventEmitter.emit('status.changed', { tournamentId: t.id, oldStatus: t.status, newStatus: TournamentStatus.COMPLETED });
+    }
+
+    // Expire ACTIVE ROSTER_CHANGE submissions when the lock time is reached
+    const activeRosterChanges = await this.prisma.registrationSubmission.findMany({
+      where: {
+        status: RegistrationSubmissionStatus.ACTIVE,
+        kind: RegistrationSubmissionKind.ROSTER_CHANGE,
+      },
+      include: {
+        tournament: {
+          select: {
+            id: true,
+            title: true,
+            rosterLockAt: true,
+            matches: {
+              take: 1,
+              orderBy: { scheduledAt: 'asc' },
+              select: { scheduledAt: true, status: true },
+            },
+          },
+        },
+        team: {
+          select: { id: true, name: true, captainId: true },
+        },
+      },
+    });
+
+    for (const sub of activeRosterChanges) {
+      let lockTime = sub.tournament.rosterLockAt;
+      if (!lockTime && sub.tournament.matches?.[0]?.scheduledAt) {
+        lockTime = sub.tournament.matches[0].scheduledAt;
+      }
+      const hasCompetitionStarted = sub.tournament.matches?.some(
+        (m) => m.status === MatchStatus.LIVE || m.status === MatchStatus.COMPLETED,
+      );
+      const isLocked = (lockTime && now >= lockTime) || hasCompetitionStarted;
+      if (isLocked) {
+        await this.prisma.registrationSubmission.update({
+          where: { id: sub.id },
+          data: { status: RegistrationSubmissionStatus.EXPIRED },
+        });
+
+        await this.prisma.tournamentAuditLog.create({
+          data: {
+            tournamentId: sub.tournament.id,
+            action: 'ROSTER_CHANGE_EXPIRED',
+            details: {
+              submissionId: sub.id,
+              teamId: sub.team.id,
+              reason: 'Lock time reached',
+            },
+            adminUserId: 'SYSTEM',
+          },
+        });
+
+        this.eventEmitter.emit('team.roster_change_expired', {
+          ownerUserId: sub.ownerUserId || sub.team.captainId,
+          tournamentId: sub.tournament.id,
+          tournamentTitle: sub.tournament.title,
+          teamId: sub.team.id,
+          teamName: sub.team.name,
+          submissionId: sub.id,
+        });
+      }
     }
 
     // Safety net: check for LIVE tournaments that have WAITING entries and free slots

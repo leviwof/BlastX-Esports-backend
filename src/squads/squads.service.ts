@@ -12,6 +12,7 @@ import {
   TournamentInvitationStatus,
   TournamentStatus,
   OwnerRole,
+  TeamMode,
 } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -59,12 +60,12 @@ export class SquadsService {
       const teamMember = await this.prisma.teamMember.findFirst({
         where: { userId },
         include: {
-          team: true,
+          team: { include: { tournament: true } },
         },
         orderBy: { joinedAt: 'desc' },
       });
 
-      if (teamMember?.teamId) {
+      if (teamMember?.teamId && teamMember.team?.tournament?.teamMode !== TeamMode.DUO) {
         await this.syncTeamToSquad(teamMember.teamId);
         membership = await this.prisma.squadMember.findUnique({
           where: { userId },
@@ -87,9 +88,14 @@ export class SquadsService {
 
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
-      include: { members: true },
+      include: { members: true, tournament: true },
     });
     if (!team) return;
+
+    // A Duo tournament team never becomes or touches a Squad, and must not block or alter squad_members
+    if (team.tournament?.teamMode === TeamMode.DUO) {
+      return;
+    }
 
     let squadId = team.persistentSquadId;
 

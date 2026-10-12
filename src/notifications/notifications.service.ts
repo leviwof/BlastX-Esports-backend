@@ -726,6 +726,99 @@ export class NotificationsService implements OnModuleInit {
     });
   }
 
+  // --- Section 7: Roster Change Notifications ---
+  @OnEvent('team.roster_change_requested')
+  async handleRosterChangeRequested(payload: {
+    approvalId: string;
+    approverUserId: string;
+    tournamentId: string;
+    tournamentTitle: string;
+    teamId: string;
+    teamName: string;
+    ownerName: string;
+    kind: string;
+  }): Promise<void> {
+    await this.sendToUser(payload.approverUserId, {
+      type: 'registration_approval',
+      title: 'Roster Change Approval',
+      body: `${payload.ownerName} requested to add you to the playing roster for ${payload.teamName} in ${payload.tournamentTitle}. Tap to approve.`,
+      data: {
+        approvalId: payload.approvalId,
+        tournamentId: payload.tournamentId,
+        teamId: payload.teamId,
+        kind: payload.kind,
+        action: 'registration_approval',
+      },
+    });
+  }
+
+  @OnEvent('team.roster_change_applied')
+  async handleRosterChangeApplied(payload: {
+    teamId: string;
+    tournamentId: string;
+    tournamentTitle?: string;
+    teamName: string;
+    rosterVersion: number;
+    memberUserIds?: string[];
+  }): Promise<void> {
+    const userIds = payload.memberUserIds ?? [];
+    if (userIds.length > 0) {
+      await this.sendToUsers(userIds, {
+        type: 'roster_change_applied',
+        title: 'Roster Change Applied',
+        body: `The playing roster for ${payload.teamName} has been updated to version ${payload.rosterVersion}.`,
+        data: {
+          teamId: payload.teamId,
+          tournamentId: payload.tournamentId,
+          rosterVersion: payload.rosterVersion,
+        },
+      });
+    }
+  }
+
+  @OnEvent('team.roster_change_declined')
+  async handleRosterChangeDeclined(payload: {
+    ownerUserId: string;
+    tournamentId: string;
+    tournamentTitle?: string;
+    teamId: string;
+    teamName: string;
+    declinedByUserId?: string;
+    submissionId?: string;
+  }): Promise<void> {
+    await this.sendToUser(payload.ownerUserId, {
+      type: 'roster_change_declined',
+      title: 'Roster Change Declined',
+      body: `A player declined your roster change request for ${payload.teamName}. The current roster remains unchanged.`,
+      data: {
+        teamId: payload.teamId,
+        tournamentId: payload.tournamentId,
+        submissionId: payload.submissionId ?? '',
+      },
+    });
+  }
+
+  @OnEvent('team.roster_change_expired')
+  async handleRosterChangeExpired(payload: {
+    ownerUserId: string;
+    tournamentId: string;
+    tournamentTitle?: string;
+    teamId: string;
+    teamName: string;
+    submissionId?: string;
+  }): Promise<void> {
+    await this.sendToUser(payload.ownerUserId, {
+      type: 'roster_change_expired',
+      title: 'Roster Change Expired',
+      body: `Your roster change request for ${payload.teamName} has expired because the roster lock time was reached.`,
+      data: {
+        teamId: payload.teamId,
+        tournamentId: payload.tournamentId,
+        submissionId: payload.submissionId ?? '',
+      },
+    });
+  }
+
   // --- 2. Slot & Registration Status Events ---
   @OnEvent('tournament.slot_confirmed')
   async handleSlotConfirmed(payload: { userIds: string[]; tournamentTitle: string; tournamentId: string; slotNumber: number }): Promise<void> {

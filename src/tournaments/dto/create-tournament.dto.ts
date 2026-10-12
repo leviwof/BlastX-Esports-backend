@@ -68,6 +68,10 @@ export class CreateTournamentDto {
   @IsDateString()
   registration_closes_at!: string;
 
+  @IsOptional()
+  @IsDateString()
+  roster_lock_at?: string;
+
   @IsNotEmpty()
   @IsDateString()
   starts_at!: string;

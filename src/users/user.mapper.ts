@@ -23,6 +23,7 @@ export interface UserResponse {
   name: string;
   email: string;
   phone: string | null;
+  needs_profile_setup: boolean;
   profile_pic: string | null;
   is_vip: boolean;
   crown_badge_unlocked: boolean;
@@ -61,6 +62,7 @@ export const toUserResponse = (
   name: user.name,
   email: user.email,
   phone: user.phone,
+  needs_profile_setup: !user.name?.trim() || !user.phone?.trim(),
   profile_pic: user.profilePic,
   is_vip: user.isVip,
   crown_badge_unlocked: user.crownBadgeUnlocked,

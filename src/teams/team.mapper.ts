@@ -41,6 +41,21 @@ export interface TeamRegistrationInfo {
   players: TeamRegistrationPlayer[];
 }
 
+export interface TeamPendingRosterChangePlayer {
+  user_id: string;
+  name: string;
+  avatar: string | null;
+  approval_status: string;
+}
+
+export interface TeamPendingRosterChange {
+  submission_id: string;
+  new_roster_version: number;
+  added_players: TeamPendingRosterChangePlayer[];
+  removed_user_ids: string[];
+  expires_at: Date | string | null;
+}
+
 export interface TeamResponse {
   id: string;
   game_id: string;
@@ -57,6 +72,7 @@ export interface TeamResponse {
   invite_code: string;
   code?: string;
   tournament_id?: string | null;
+  team_mode?: string;
   is_registered?: boolean;
   accepting_substitutes: boolean;
   created_at: Date;
@@ -64,6 +80,9 @@ export interface TeamResponse {
   registration?: TeamRegistrationInfo | null;
   my_pending_approval_id?: string | null;
   can_cancel_registration_request?: boolean;
+  pending_roster_change?: TeamPendingRosterChange | null;
+  roster_lock_at?: Date | string | null;
+  can_change_roster?: boolean;
 }
 
 export interface PrivacySafeTeamMember {
@@ -351,6 +370,45 @@ export const toTeamResponse = (
     }
   }
 
+  const tournament = (team as any).tournament;
+  const teamMode = tournament?.teamMode ?? (team as any).teamMode ?? (team as any).team_mode;
+
+  let rosterLockAt: Date | string | null = tournament?.rosterLockAt ?? (team as any).rosterLockAt ?? null;
+  if (!rosterLockAt && tournament?.matches?.[0]?.scheduledAt) {
+    rosterLockAt = tournament.matches[0].scheduledAt;
+  }
+
+  const activeRosterChangeSub =
+    (team as any).registrationSubmissions?.find(
+      (s: any) => s.status === 'ACTIVE' && s.kind === 'ROSTER_CHANGE',
+    ) ?? (team as any).activeRosterChangeSubmission;
+
+  let pendingRosterChange: TeamPendingRosterChange | null = null;
+  if (activeRosterChangeSub) {
+    const addedPlayers: TeamPendingRosterChangePlayer[] = (activeRosterChangeSub.approvals ?? []).map((app: any) => {
+      const member = team.members?.find((m: any) => m.userId === app.userId);
+      return {
+        user_id: app.userId,
+        name: app.user?.name || member?.user?.name || 'Player',
+        avatar: app.user?.profilePic || member?.user?.profilePic || null,
+        approval_status: app.status,
+      };
+    });
+
+    pendingRosterChange = {
+      submission_id: activeRosterChangeSub.id,
+      new_roster_version: (team as any).rosterVersion ? (team as any).rosterVersion + 1 : activeRosterChangeSub.rosterVersion + 1,
+      added_players: addedPlayers,
+      removed_user_ids: activeRosterChangeSub.removeUserIds ?? [],
+      expires_at: rosterLockAt,
+    };
+  }
+
+  const isConfirmed = (team as any).registrationState === 'CONFIRMED';
+  const now = new Date();
+  const isTimeLocked = rosterLockAt ? now >= new Date(rosterLockAt) : false;
+  const canChangeRoster = isConfirmed && !isTimeLocked && !activeRosterChangeSub;
+
   return {
     id: team.id,
     game_id: team.gameId,
@@ -367,8 +425,12 @@ export const toTeamResponse = (
     invite_code: team.inviteCode,
     code: team.inviteCode,
     tournament_id: team.tournamentId,
+    ...(teamMode ? { team_mode: teamMode } : {}),
     accepting_substitutes: team.acceptingSubstitutes ?? true,
     created_at: team.createdAt,
+    pending_roster_change: pendingRosterChange,
+    roster_lock_at: rosterLockAt,
+    can_change_roster: canChangeRoster,
     ...(team.members ? { members: team.members.map((member) => toTeamMemberResponse(member, team.gameId)) } : {}),
     ...(isMember
       ? {

@@ -66,6 +66,10 @@ export class UpdateTournamentDto {
 
   @IsOptional()
   @IsDateString()
+  roster_lock_at?: string;
+
+  @IsOptional()
+  @IsDateString()
   starts_at?: string;
 
   @IsOptional()

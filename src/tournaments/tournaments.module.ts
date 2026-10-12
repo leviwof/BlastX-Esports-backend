@@ -13,6 +13,8 @@ import { MatchesModule } from '../matches/matches.module';
 import { TeamsModule } from '../teams/teams.module';
 import { SquadsModule } from '../squads/squads.module';
 
+import { AuditService } from './audit.service';
+
 @Module({
   imports: [PrismaModule, MatchesModule, TeamsModule, SquadsModule],
   controllers: [
@@ -27,6 +29,7 @@ import { SquadsModule } from '../squads/squads.module';
     FormatEngineService,
     GenericBracketService,
     RegistrationService,
+    AuditService,
   ],
   exports: [
     TournamentsService,
@@ -34,6 +37,7 @@ import { SquadsModule } from '../squads/squads.module';
     FormatEngineService,
     GenericBracketService,
     RegistrationService,
+    AuditService,
   ],
 })
 export class TournamentsModule {}

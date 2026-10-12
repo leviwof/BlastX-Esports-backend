@@ -8,7 +8,7 @@ export class UpdateUserDto {
 
   @IsOptional()
   @IsString()
-  @Matches(/^[6-9]\d{9}$/, { message: 'phone must be a valid 10-digit Indian mobile number' })
+  @Matches(/^\+?[\d\s\-]{10,25}$/, { message: 'phone must be a valid phone number (10-15 digits)' })
   phone?: string | null;
 
   @IsOptional()
