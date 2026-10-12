@@ -290,7 +290,7 @@ export class LiveGateway
 
     targetRooms.forEach((roomName) => {
       this.server.to(roomName).emit('DATA_UPDATED', dataUpdatedPayload);
-      this.logger.log(`[DATA_UPDATED] Emitted to room '${roomName}': ${JSON.stringify(dataUpdatedPayload)}`);
+      this.logger.debug(`[DATA_UPDATED] Emitted to room '${roomName}': ${JSON.stringify(dataUpdatedPayload)}`);
     });
   }
 

@@ -9,6 +9,7 @@ import { RedisService } from '../redis/redis.service';
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   private readonly logger = new Logger(JwtAuthGuard.name);
+  private lastLoggedErrorTime = 0;
 
   constructor(
     private readonly jwt: JwtService,
@@ -38,7 +39,11 @@ export class JwtAuthGuard implements CanActivate {
         if (err instanceof UnauthorizedException) {
           throw err;
         }
-        this.logger.warn(`Redis blacklist check failed, failing open: ${err.message}`);
+        const now = Date.now();
+        if (now - this.lastLoggedErrorTime > 60000) {
+          this.logger.warn(`Redis blacklist check failed, failing open: ${err.message}`);
+          this.lastLoggedErrorTime = now;
+        }
       }
     }
 

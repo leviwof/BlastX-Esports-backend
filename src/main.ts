@@ -1,5 +1,5 @@
 import * as dns from 'node:dns';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { ConsoleLogger, Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
 // Ensure Node.js prefers IPv4 to prevent ENETUNREACH on cloud environments (like Railway) without IPv6 routing
@@ -12,6 +12,21 @@ import { ResponseInterceptor } from './common/response.interceptor';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { getBuildInfo } from './common/build-info';
 import { PrismaService } from './prisma/prisma.service';
+
+class ProductionLogger extends ConsoleLogger {
+  override log(message: any, context?: string) {
+    // Suppress noisy framework route & module mapping logs during bootstrap (200+ endpoints)
+    // which triggers Railway's 500 logs/sec rate limit burst
+    if (
+      context === 'RouterExplorer' ||
+      context === 'RoutesResolver' ||
+      context === 'InstanceLoader'
+    ) {
+      return;
+    }
+    super.log(message, context);
+  }
+}
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
@@ -32,7 +47,9 @@ async function bootstrap(): Promise<void> {
     `Starting build ${build.commit}${build.branch ? ` (${build.branch})` : ''} built ${build.builtAt ?? 'n/a'} on ${process.version}`,
   );
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    logger: new ProductionLogger(),
+  });
 
   app.use(
     helmet({
