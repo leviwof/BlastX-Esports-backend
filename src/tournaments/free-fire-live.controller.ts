@@ -21,11 +21,12 @@ export class FreeFireLiveController {
 
   @Public()
   @Get()
-  async list(@Query() query: FilterTournamentQueryDto) {
+  async list(@Query() query: FilterTournamentQueryDto, @Req() req: Request) {
     // Cursor is a page token for this offset-backed implementation.  Page
     // remains supported for clients that use the standard pagination model.
     if (query.cursor && /^\d+$/.test(query.cursor)) query.page = Math.max(1, Number(query.cursor));
-    const result = await this.tournaments.getTournaments(query, TournamentSection.FREEFIRE_LIVE);
+    const userId = await this.optionalUser(req);
+    const result = await this.tournaments.getTournaments(query, TournamentSection.FREEFIRE_LIVE, false, userId);
     return {
       status: 'success', page: result.page, limit: result.limit, total: result.total,
       next_cursor: result.page * result.limit < result.total ? String(result.page + 1) : null,
@@ -98,8 +99,14 @@ export class FreeFireLiveController {
       organizerVerified: t.organizerVerified, accentColorHex: t.accentColorHex,
       team_mode: t.teamMode, map: t.map, format: t.format, entry_fee: t.entryFee,
       max_slots: t.maxSlots, filledSlots: t.registeredCount, registered_count: t.registeredCount,
-      slots_left: Math.max(0, t.maxSlots - t.registeredCount), is_registered: registered,
+      slots_left: Math.max(0, t.maxSlots - t.registeredCount),
+      is_full: t.registeredCount >= t.maxSlots,
+      waitlist_count: t.waitlistCount ?? t.waitlist_count ?? t._count?.waitlistEntries ?? 0,
+      registration_opens_at: t.registrationOpensAt,
+      registration_closes_at: t.registrationClosesAt,
+      is_registered: registered,
       streamUrl: t.streamUrl, description: t.description,
+      ...(t.myRegistration !== undefined ? { my_registration: t.myRegistration } : {}),
     };
     return detail ? {
       ...base, booyahBonus: t.booyahBonus, perKillReward: t.perKillReward,

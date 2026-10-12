@@ -6,7 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Match, MatchResult, TournamentFormat, TournamentStatus, MatchStatus, RegistrationStatus } from '@prisma/client';
+import { Match, MatchResult, TournamentFormat, TournamentStatus, MatchStatus, RegistrationStatus, TeamRegistrationState } from '@prisma/client';
 import { CreateMatchDto } from './dto/create-match.dto';
 import { BulkRecordResultsDto } from './dto/record-results.dto';
 import { LeaderboardEntry, LeaderboardResponse, toMatchResponse, MatchResponse } from './match.mapper';
@@ -874,10 +874,28 @@ export class MatchesService {
       throw new NotFoundException(`Team '${teamId}' registration in tournament '${tournamentId}' not found`);
     }
 
+    const wasConfirmed = reg.status === RegistrationStatus.CONFIRMED;
+
     const updated = await this.prisma.tournamentRegistration.update({
       where: { id: reg.id },
       data: { status: targetStatus },
     });
+
+    if (wasConfirmed && targetStatus !== RegistrationStatus.CONFIRMED) {
+      await this.prisma.tournament.updateMany({
+        where: { id: tournamentId, registeredCount: { gt: 0 } },
+        data: { registeredCount: { decrement: 1 } },
+      });
+
+      if (reg.teamId) {
+        await this.prisma.team.update({
+          where: { id: reg.teamId },
+          data: { registrationState: TeamRegistrationState.FORMING },
+        });
+      }
+
+      this.eventEmitter.emit('tournament.slot_freed', { tournamentId });
+    }
 
     return {
       status: 'success',

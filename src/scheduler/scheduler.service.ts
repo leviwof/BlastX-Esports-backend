@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConfigService } from '@nestjs/config';
-import { MatchStatus, TournamentInvitationStatus, TournamentStatus } from '@prisma/client';
+import { MatchStatus, TournamentInvitationStatus, TournamentStatus, WaitlistEntryStatus } from '@prisma/client';
 import { Queue, Worker } from 'bullmq';
 import * as net from 'net';
 
@@ -237,6 +237,20 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     for (const t of completed) {
       await this.prisma.tournament.update({ where: { id: t.id }, data: { status: TournamentStatus.COMPLETED } });
       this.eventEmitter.emit('status.changed', { tournamentId: t.id, oldStatus: t.status, newStatus: TournamentStatus.COMPLETED });
+    }
+
+    // Safety net: check for LIVE tournaments that have WAITING entries and free slots
+    const liveWithWaitlist = await this.prisma.tournament.findMany({
+      where: {
+        status: TournamentStatus.LIVE,
+        waitlistEntries: { some: { status: WaitlistEntryStatus.WAITING } },
+      },
+      select: { id: true, maxSlots: true, registeredCount: true },
+    });
+    for (const t of liveWithWaitlist) {
+      if (t.registeredCount < t.maxSlots) {
+        this.eventEmitter.emit('tournament.slot_freed', { tournamentId: t.id });
+      }
     }
   } catch (err: any) {
     this.logger.error(`[SCHEDULER] Lifecycle check error: ${err.message}`, err.stack);

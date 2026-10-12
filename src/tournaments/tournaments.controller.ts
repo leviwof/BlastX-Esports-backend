@@ -66,7 +66,7 @@ export class TournamentsController {
       }
     }
 
-    const result = await this.tournamentsService.getTournaments(query);
+    const result = await this.tournamentsService.getTournaments(query, undefined, false, currentUserId);
     return {
       status: 'success',
       // API clients unwrap this envelope, so pagination must live in `data`.

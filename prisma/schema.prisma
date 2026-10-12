@@ -110,6 +110,13 @@ enum RegistrationApprovalStatus {
   DECLINED
 }
 
+enum WaitlistEntryStatus {
+  WAITING
+  PROMOTED
+  REMOVED
+  INVALID
+}
+
 enum MatchStatus {
   SCHEDULED
   LIVE
@@ -228,6 +235,7 @@ model Team {
   joinRequests          TeamJoinRequest[]
   registrationSubmissions RegistrationSubmission[]
   registrationEvents      RegistrationEvent[]
+  waitlistEntries         TournamentWaitlistEntry[]
 
   @@unique([gameId, tournamentId, name], name: "unique_game_tournament_team_name")
   @@unique([tournamentId, persistentSquadId], name: "unique_tournament_persistent_squad")
@@ -326,6 +334,23 @@ model RegistrationEvent {
   @@map("registration_events")
 }
 
+model TournamentWaitlistEntry {
+  id           String              @id @default(cuid())
+  tournamentId String              @map("tournament_id")
+  teamId       String              @map("team_id")
+  status       WaitlistEntryStatus @default(WAITING)
+  reason       String?
+  createdAt    DateTime            @default(now()) @map("created_at")
+  resolvedAt   DateTime?           @map("resolved_at")
+
+  tournament   Tournament          @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  team         Team                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, teamId])
+  @@index([tournamentId, status, createdAt])
+  @@map("tournament_waitlist_entries")
+}
+
 model Tournament {
   id                   String            @id @default(cuid())
   gameId               String            @map("game_id")
@@ -376,6 +401,7 @@ model Tournament {
   requirePlayerApproval Boolean               @default(true) @map("require_player_approval")
   registrationSubmissions RegistrationSubmission[]
   registrationEvents      RegistrationEvent[]
+  waitlistEntries         TournamentWaitlistEntry[]
 
   // NEW fields for format engine
   registrationUnitCount  Int?                  @map("registration_unit_count")

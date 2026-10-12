@@ -59,6 +59,10 @@ export interface TournamentResponse {
   registeredCount?: number;
   slots_left: number;
   slotsLeft?: number;
+  is_full: boolean;
+  isFull?: boolean;
+  waitlist_count: number;
+  waitlistCount?: number;
   entry_fee: number;
   entryFee?: number;
   prize_pool: number;
@@ -98,7 +102,19 @@ export interface TournamentResponse {
   require_player_approval?: boolean;
   is_registered?: boolean;
   isRegistered?: boolean;
-  my_registration?: TournamentRegistrationResponse | null;
+  my_registration?: MyRegistrationSummary | TournamentRegistrationResponse | null;
+}
+
+export interface MyRegistrationSummary {
+  state: string;
+  team_id: string | null;
+  slot_number: number | null;
+  waitlist_position: number | null;
+  approvals_required: number;
+  approvals_approved: number;
+  my_pending_approval_id: string | null;
+  my_role: 'LEADER' | 'MANAGER' | 'PLAYER' | 'SUBSTITUTE' | 'SOLO' | null;
+  is_playing: boolean;
 }
 
 export interface StageTeam {
@@ -161,11 +177,15 @@ export const toTournamentResponse = (
   includeRoom: boolean = false,
 ): TournamentResponse => {
   const slotsLeft = Math.max(0, t.maxSlots - t.registeredCount);
+  const isFull = t.registeredCount >= t.maxSlots;
+  const waitlistCount = (t as any).waitlistCount ?? (t as any).waitlist_count ?? (t as any)._count?.waitlistEntries ?? 0;
 
   let isRegistered = false;
-  let myRegistration: TournamentRegistrationResponse | null = null;
+  let myRegistration: any = (t as any).myRegistration !== undefined ? (t as any).myRegistration : null;
 
-  if (currentUserId && t.registrations) {
+  if (myRegistration) {
+    isRegistered = myRegistration.state === 'CONFIRMED' || myRegistration.status === 'CONFIRMED';
+  } else if (currentUserId && t.registrations) {
     const found = t.registrations.find((r) => {
       if (r.status !== 'CONFIRMED') return false;
       if (r.userId === currentUserId) return true;
@@ -210,6 +230,10 @@ export const toTournamentResponse = (
     registeredCount: t.registeredCount,
     slots_left: slotsLeft,
     slotsLeft,
+    is_full: isFull,
+    isFull,
+    waitlist_count: waitlistCount,
+    waitlistCount,
     entry_fee: t.entryFee,
     entryFee: t.entryFee,
     prize_pool: t.prizePool,

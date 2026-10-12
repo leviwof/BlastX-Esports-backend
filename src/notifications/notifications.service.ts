@@ -734,22 +734,33 @@ export class NotificationsService implements OnModuleInit {
   }
 
   @OnEvent('tournament.waitlisted')
-  async handleWaitlisted(payload: { userIds: string[]; tournamentTitle: string; tournamentId: string }): Promise<void> {
+  async handleWaitlisted(payload: { userIds: string[]; tournamentTitle: string; tournamentId: string; position?: number; teamId?: string; size?: number }): Promise<void> {
+    const queueText = payload.position ? ` You are #${payload.position} in the queue.` : '';
     await this.sendToUsers(payload.userIds, {
       type: 'waitlisted',
       title: 'Added to Waitlist',
-      body: `All slots are currently filled. Your team is on the waitlist for ${payload.tournamentTitle}.`,
-      data: { tournamentId: payload.tournamentId },
+      body: `All slots are currently filled. Your team is on the waitlist for ${payload.tournamentTitle}.${queueText}`,
+      data: { tournamentId: payload.tournamentId, position: payload.position, teamId: payload.teamId, size: payload.size },
     });
   }
 
   @OnEvent('tournament.waitlist_promoted')
-  async handleWaitlistPromoted(payload: { userIds: string[]; tournamentTitle: string; tournamentId: string; slotNumber: number }): Promise<void> {
+  async handleWaitlistPromoted(payload: { userIds: string[]; tournamentTitle: string; tournamentId: string; slotNumber: number; teamId?: string }): Promise<void> {
     await this.sendToUsers(payload.userIds, {
       type: 'waitlist_promoted',
       title: '🚀 Promoted to Main Roster!',
       body: `A slot opened up! You are now confirmed in Slot #${payload.slotNumber} for ${payload.tournamentTitle}.`,
-      data: { tournamentId: payload.tournamentId, slotNumber: payload.slotNumber },
+      data: { tournamentId: payload.tournamentId, slotNumber: payload.slotNumber, teamId: payload.teamId },
+    });
+  }
+
+  @OnEvent('tournament.waitlist_invalidated')
+  async handleWaitlistInvalidated(payload: { ownerUserId: string; tournamentTitle: string; tournamentId: string; reason: string; teamId?: string }): Promise<void> {
+    await this.sendToUsers([payload.ownerUserId], {
+      type: 'waitlist_invalidated',
+      title: 'Waitlist Registration Invalidated',
+      body: `Your waitlist entry for ${payload.tournamentTitle} could not be promoted: ${payload.reason}`,
+      data: { tournamentId: payload.tournamentId, reason: payload.reason, teamId: payload.teamId },
     });
   }
 

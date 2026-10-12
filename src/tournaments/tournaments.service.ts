@@ -28,6 +28,9 @@ import {
   OwnerRole,
   UserRole,
   TeamRegistrationState,
+  MatchStatus,
+  RoundStatus,
+  WaitlistEntryStatus,
 } from '@prisma/client';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
@@ -277,10 +280,20 @@ export class TournamentsService implements OnModuleInit {
       data.requirePlayerApproval = dto.require_player_approval ?? dto.requirePlayerApproval;
     }
 
-    return this.prisma.tournament.update({
+    const updated = await this.prisma.tournament.update({
       where: { id: tournamentId },
       data,
     });
+
+    if (dto.max_slots !== undefined && dto.max_slots > tournament.maxSlots) {
+      if (this.registrationService) {
+        await this.registrationService.promoteFromWaitlist(tournamentId);
+      } else {
+        this.eventEmitter.emit('tournament.slot_freed', { tournamentId });
+      }
+    }
+
+    return updated;
   }
 
   async updateStatus(adminId: string, tournamentId: string, newStatus: TournamentStatus): Promise<Tournament> {
@@ -343,16 +356,58 @@ export class TournamentsService implements OnModuleInit {
   async disqualifyRegistration(adminId: string, tournamentId: string, dto: DisqualifyRegistrationDto): Promise<TournamentRegistration> {
     const registration = await this.prisma.tournamentRegistration.findUnique({
       where: { id: dto.registration_id },
+      include: { team: true },
     });
 
     if (!registration || registration.tournamentId !== tournamentId) {
       throw new NotFoundException('Registration record not found for this tournament');
     }
 
-    return this.prisma.tournamentRegistration.update({
-      where: { id: dto.registration_id },
-      data: { status: RegistrationStatus.DISQUALIFIED },
+    const wasConfirmed = registration.status === RegistrationStatus.CONFIRMED;
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const reg = await tx.tournamentRegistration.update({
+        where: { id: dto.registration_id },
+        data: { status: RegistrationStatus.DISQUALIFIED },
+      });
+
+      if (wasConfirmed) {
+        await tx.tournament.updateMany({
+          where: { id: tournamentId, registeredCount: { gt: 0 } },
+          data: { registeredCount: { decrement: 1 } },
+        });
+
+        if (registration.teamId) {
+          await tx.team.update({
+            where: { id: registration.teamId },
+            data: { registrationState: TeamRegistrationState.FORMING },
+          });
+
+          await tx.registrationEvent.create({
+            data: {
+              tournamentId,
+              teamId: registration.teamId,
+              actorUserId: adminId,
+              eventType: 'REGISTRATION_DISQUALIFIED',
+              rosterVersion: registration.team?.rosterVersion ?? 1,
+              details: { reason: 'Admin disqualified registration' },
+            },
+          });
+        }
+      }
+
+      return reg;
     });
+
+    if (wasConfirmed) {
+      if (this.registrationService) {
+        await this.registrationService.promoteFromWaitlist(tournamentId);
+      } else {
+        this.eventEmitter.emit('tournament.slot_freed', { tournamentId });
+      }
+    }
+
+    return updated;
   }
 
   async deleteTournament(adminId: string, tournamentId: string): Promise<{ success: true; message: string; id: string }> {
@@ -395,6 +450,7 @@ export class TournamentsService implements OnModuleInit {
     dto: FilterTournamentQueryDto,
     requiredSection?: TournamentSection,
     includeNonPublic = false,
+    currentUserId?: string,
   ): Promise<PaginatedResult<Tournament & { game: { slug: string } }> & { counts: { live: number; upcoming: number; completed: number } }> {
     // Player-facing lists hide drafts/cancelled events; the admin catalogue
     // includes them so a new DRAFT can immediately be edited or published.
@@ -487,6 +543,8 @@ export class TournamentsService implements OnModuleInit {
     );
     const completedCount = statusMap.get(TournamentStatus.COMPLETED) || 0;
 
+    await this.attachRegistrationContext(items, currentUserId);
+
     return {
       ...createPaginatedResponse(items, dto.page || 1, dto.limit || 20, total),
       counts: {
@@ -517,6 +575,8 @@ export class TournamentsService implements OnModuleInit {
       throw new NotFoundException('Tournament not found');
     }
 
+    await this.attachRegistrationContext([tournament], currentUserId);
+
     return tournament as any;
   }
 
@@ -538,11 +598,15 @@ export class TournamentsService implements OnModuleInit {
 
     const tournamentIds = Array.from(new Set(registrations.map((r) => r.tournamentId)));
 
-    return this.prisma.tournament.findMany({
+    const items = await this.prisma.tournament.findMany({
       where: { id: { in: tournamentIds } },
       include: { game: { select: { slug: true } } },
       orderBy: { startsAt: 'asc' },
     });
+
+    await this.attachRegistrationContext(items, userId);
+
+    return items;
   }
 
   async registerUserOrTeam(userId: string, tournamentId: string, dto: RegisterTournamentDto): Promise<TournamentRegistration> {
@@ -747,12 +811,22 @@ export class TournamentsService implements OnModuleInit {
         throw new BadRequestException('Tournament registration is full or is no longer LIVE');
       }
 
-      // Read updated registered count to assign slot number
-      const updatedTourney = await tx.tournament.findUnique({
-        where: { id: tournamentId },
-        select: { registeredCount: true },
+      // Assign lowest free slot_number between 1 and max_slots among CONFIRMED
+      const confirmedRegistrations = await tx.tournamentRegistration.findMany({
+        where: {
+          tournamentId,
+          status: RegistrationStatus.CONFIRMED,
+        },
+        select: { slotNumber: true },
       });
-      const slotNumber = updatedTourney?.registeredCount || 1;
+      const usedSlots = new Set(confirmedRegistrations.map((r) => r.slotNumber));
+      let slotNumber = 1;
+      for (let s = 1; s <= tournament.maxSlots; s++) {
+        if (!usedSlots.has(s)) {
+          slotNumber = s;
+          break;
+        }
+      }
 
       // PHASE 3 HOOK: Wallet debit integration
       if (tournament.entryFee > 0) {
@@ -911,60 +985,251 @@ export class TournamentsService implements OnModuleInit {
     return registration;
   }
 
+  async hasCompetitionStarted(tournamentId: string): Promise<boolean> {
+    const activeMatch = await this.prisma.match.findFirst({
+      where: {
+        tournamentId,
+        status: { in: [MatchStatus.LIVE, MatchStatus.COMPLETED] },
+      },
+      select: { id: true },
+    });
+    if (activeMatch) return true;
+
+    const startedRound = await this.prisma.tournamentRound.findFirst({
+      where: {
+        tournamentId,
+        OR: [
+          { status: { in: [RoundStatus.LIVE, RoundStatus.COMPLETED] } },
+          { startedAt: { not: null } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (startedRound) return true;
+
+    return false;
+  }
+
   async unregisterUserOrTeam(userId: string, tournamentId: string): Promise<{ message: string }> {
     const tournament = await this.getTournamentEntity(tournamentId);
 
-    const now = new Date();
-    if (now > tournament.registrationClosesAt) {
-      throw new BadRequestException('Cannot unregister after registration window has closed');
+    const competitionStarted = await this.hasCompetitionStarted(tournamentId);
+    if (competitionStarted) {
+      throw new BadRequestException({
+        code: 'COMPETITION_STARTED',
+        error_code: 'COMPETITION_STARTED',
+        message: 'Cannot unregister after competition matches or rounds have started',
+      });
     }
 
-    const userTeams = await this.prisma.teamMember.findMany({
-      where: { userId, role: TeamMemberRole.CAPTAIN },
-      select: { teamId: true },
-    });
-    const captainTeamIds = userTeams.map((t) => t.teamId);
-
-    const registration = await this.prisma.tournamentRegistration.findFirst({
-      where: {
-        tournamentId,
-        status: RegistrationStatus.CONFIRMED,
-        OR: [
-          { userId },
-          ...(captainTeamIds.length > 0 ? [{ teamId: { in: captainTeamIds } }] : []),
-        ],
-      },
-    });
-
-    if (!registration) {
-      throw new NotFoundException('You do not have an active confirmed registration for this tournament');
-    }
-
-    return this.prisma.$transaction(async (tx) => {
-      await tx.tournamentRegistration.update({
-        where: { id: registration.id },
-        data: { status: RegistrationStatus.CANCELLED },
+    if (tournament.teamMode !== TeamMode.SOLO) {
+      let userTeam = await this.prisma.team.findFirst({
+        where: {
+          tournamentId,
+          members: { some: { userId } },
+        },
+        include: {
+          members: true,
+          waitlistEntries: {
+            where: { status: WaitlistEntryStatus.WAITING },
+          },
+        },
       });
 
-      await tx.tournament.update({
-        where: { id: tournamentId },
-        data: { registeredCount: { decrement: 1 } },
-      });
+      let registration: any = null;
 
-      if (registration.teamId) {
-        await tx.team.update({
-          where: { id: registration.teamId },
-          data: { registrationState: TeamRegistrationState.FORMING },
+      if (!userTeam) {
+        const userMemberships = await this.prisma.teamMember.findMany({
+          where: { userId },
+          select: { teamId: true },
+        });
+        const teamIds = userMemberships.map((m) => m.teamId);
+
+        registration = await this.prisma.tournamentRegistration.findFirst({
+          where: {
+            tournamentId,
+            status: RegistrationStatus.CONFIRMED,
+            OR: [
+              { userId },
+              ...(teamIds.length > 0 ? [{ teamId: { in: teamIds } }] : []),
+            ],
+          },
+          include: {
+            team: {
+              include: {
+                members: true,
+                waitlistEntries: {
+                  where: { status: WaitlistEntryStatus.WAITING },
+                },
+              },
+            },
+          },
+        });
+
+        if (registration?.team) {
+          userTeam = registration.team;
+        } else if (registration?.teamId) {
+          userTeam = (await this.prisma.team.findUnique({
+            where: { id: registration.teamId },
+            include: {
+              members: true,
+              waitlistEntries: { where: { status: WaitlistEntryStatus.WAITING } },
+            },
+          })) || ({
+            id: registration.teamId,
+            tournamentId,
+            captainId: userId,
+            registrationState: TeamRegistrationState.CONFIRMED,
+            rosterVersion: 1,
+            members: [],
+            waitlistEntries: [],
+          } as any);
+        }
+      }
+
+      if (!userTeam) {
+        throw new NotFoundException('You do not have an active confirmed registration for this tournament');
+      }
+
+      if (userTeam.captainId && userTeam.captainId !== userId) {
+        throw new ForbiddenException({
+          code: 'NOT_TEAM_OWNER',
+          error_code: 'NOT_TEAM_OWNER',
+          message: 'Only the team owner may unregister the team',
         });
       }
 
-      // PHASE 3 HOOK: Refund entry fee if paid
-      if (tournament.entryFee > 0) {
-        // walletService.credit(userId, tournament.entryFee, ...)
+      const isWaitlisted =
+        userTeam.registrationState === TeamRegistrationState.WAITLISTED ||
+        (userTeam.waitlistEntries && userTeam.waitlistEntries.length > 0);
+
+      if (isWaitlisted) {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.tournamentWaitlistEntry.updateMany({
+            where: {
+              tournamentId,
+              teamId: userTeam.id,
+              status: WaitlistEntryStatus.WAITING,
+            },
+            data: {
+              status: WaitlistEntryStatus.REMOVED,
+              resolvedAt: new Date(),
+              reason: 'Team left waitlist',
+            },
+          });
+
+          await tx.team.update({
+            where: { id: userTeam.id },
+            data: { registrationState: TeamRegistrationState.FORMING },
+          });
+
+          await tx.registrationSubmission.updateMany({
+            where: { teamId: userTeam.id, status: 'ACTIVE' },
+            data: { status: 'CANCELLED' },
+          });
+
+          await tx.registrationEvent.create({
+            data: {
+              tournamentId,
+              teamId: userTeam.id,
+              actorUserId: userId,
+              eventType: 'WAITLIST_REMOVED',
+              rosterVersion: userTeam.rosterVersion ?? 1,
+              details: { reason: 'Team owner left waitlist' },
+            },
+          });
+        });
+
+        return { message: 'Successfully removed from waitlist' };
+      }
+
+      if (!registration) {
+        registration = await this.prisma.tournamentRegistration.findFirst({
+          where: {
+            tournamentId,
+            teamId: userTeam.id,
+            status: RegistrationStatus.CONFIRMED,
+          },
+        });
+      }
+
+      if (!registration) {
+        throw new NotFoundException('You do not have an active confirmed registration for this tournament');
+      }
+
+      await this.prisma.$transaction(async (tx) => {
+        await tx.tournamentRegistration.update({
+          where: { id: registration.id },
+          data: { status: RegistrationStatus.CANCELLED },
+        });
+
+        await tx.tournament.update({
+          where: { id: tournamentId },
+          data: { registeredCount: { decrement: 1 } },
+        });
+
+        await tx.team.update({
+          where: { id: userTeam.id },
+          data: { registrationState: TeamRegistrationState.FORMING },
+        });
+
+        await tx.registrationSubmission.updateMany({
+          where: { teamId: userTeam.id, status: 'ACTIVE' },
+          data: { status: 'CANCELLED' },
+        });
+
+        await tx.registrationEvent.create({
+          data: {
+            tournamentId,
+            teamId: userTeam.id,
+            actorUserId: userId,
+            eventType: 'REGISTRATION_CANCELLED',
+            rosterVersion: userTeam.rosterVersion ?? 1,
+            details: { reason: 'Team owner unregistered' },
+          },
+        });
+      });
+
+      if (this.registrationService) {
+        await this.registrationService.promoteFromWaitlist(tournamentId);
+      } else {
+        this.eventEmitter.emit('tournament.slot_freed', { tournamentId });
       }
 
       return { message: 'Successfully unregistered from tournament' };
-    });
+    } else {
+      const registration = await this.prisma.tournamentRegistration.findFirst({
+        where: {
+          tournamentId,
+          userId,
+          status: RegistrationStatus.CONFIRMED,
+        },
+      });
+
+      if (!registration) {
+        throw new NotFoundException('You do not have an active confirmed registration for this tournament');
+      }
+
+      await this.prisma.$transaction(async (tx) => {
+        await tx.tournamentRegistration.update({
+          where: { id: registration.id },
+          data: { status: RegistrationStatus.CANCELLED },
+        });
+
+        await tx.tournament.updateMany({
+          where: { id: tournamentId, registeredCount: { gt: 0 } },
+          data: { registeredCount: { decrement: 1 } },
+        });
+      });
+
+      if (this.registrationService) {
+        await this.registrationService.promoteFromWaitlist(tournamentId);
+      } else {
+        this.eventEmitter.emit('tournament.slot_freed', { tournamentId });
+      }
+
+      return { message: 'Successfully unregistered from tournament' };
+    }
   }
 
   async getRoomCredentials(
@@ -1194,6 +1459,35 @@ export class TournamentsService implements OnModuleInit {
 
       const isRegistered = registration?.status === RegistrationStatus.CONFIRMED;
       const invitations = await this.getLobbyInvitations(formingTeam.id);
+      let waitlistPosition: number | null = null;
+      let waitlistSize: number | null = null;
+
+      if (formingTeam.registrationState === TeamRegistrationState.WAITLISTED) {
+        const entry = await this.prisma.tournamentWaitlistEntry.findFirst({
+          where: {
+            tournamentId,
+            teamId: formingTeam.id,
+            status: WaitlistEntryStatus.WAITING,
+          },
+        });
+        if (entry) {
+          const earlierCount = await this.prisma.tournamentWaitlistEntry.count({
+            where: {
+              tournamentId,
+              status: WaitlistEntryStatus.WAITING,
+              createdAt: { lt: entry.createdAt },
+            },
+          });
+          waitlistPosition = earlierCount + 1;
+        }
+        waitlistSize = await this.prisma.tournamentWaitlistEntry.count({
+          where: {
+            tournamentId,
+            status: WaitlistEntryStatus.WAITING,
+          },
+        });
+      }
+
       const canRegister = this.computeCanRegister(formingTeam, userId, tournament);
 
       return {
@@ -1201,12 +1495,14 @@ export class TournamentsService implements OnModuleInit {
         tournament_id: tournamentId,
         is_registered: isRegistered,
         slot_number: registration?.slotNumber ?? null,
-        registration_status: isRegistered ? 'REGISTERED' : 'FORMING',
+        registration_status: isRegistered ? 'REGISTERED' : (formingTeam.registrationState === 'WAITLISTED' ? 'WAITLISTED' : 'FORMING'),
         registration_state: formingTeam.registrationState ?? 'FORMING',
         roster_version: formingTeam.rosterVersion ?? 1,
         can_register: canRegister,
         invitations,
         is_ready: mainCount === 4,
+        waitlist_position: waitlistPosition,
+        waitlist_size: waitlistSize,
       };
     }
 
@@ -1690,5 +1986,144 @@ export class TournamentsService implements OnModuleInit {
       status: tournament.status,
       stages,
     };
+  }
+
+  async attachRegistrationContext(tournaments: any[], currentUserId?: string): Promise<any[]> {
+    if (!tournaments || tournaments.length === 0) return tournaments;
+    const tournamentIds = tournaments.map((t) => t.id);
+
+    const waitlistCounts = await this.prisma.tournamentWaitlistEntry.groupBy({
+      by: ['tournamentId'],
+      where: {
+        tournamentId: { in: tournamentIds },
+        status: WaitlistEntryStatus.WAITING,
+      },
+      _count: { id: true },
+    });
+    const waitlistCountMap = new Map(waitlistCounts.map((w) => [w.tournamentId, w._count.id]));
+
+    for (const t of tournaments) {
+      t.waitlistCount = waitlistCountMap.get(t.id) ?? 0;
+    }
+
+    if (!currentUserId) {
+      return tournaments;
+    }
+
+    // Batched query 1: User's teams in these tournaments
+    const userTeams = await this.prisma.team.findMany({
+      where: {
+        tournamentId: { in: tournamentIds },
+        members: { some: { userId: currentUserId } },
+      },
+      include: {
+        members: true,
+        waitlistEntries: {
+          where: { status: WaitlistEntryStatus.WAITING },
+        },
+        registrationSubmissions: {
+          where: { status: 'ACTIVE' },
+          include: { approvals: true },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    // Batched query 2: Solo confirmed registrations
+    const soloRegs = await this.prisma.tournamentRegistration.findMany({
+      where: {
+        tournamentId: { in: tournamentIds },
+        userId: currentUserId,
+        teamId: null,
+        status: RegistrationStatus.CONFIRMED,
+      },
+    });
+
+    // Batched query 3: Team confirmed registrations
+    const teamIds = userTeams.map((tm) => tm.id);
+    const teamRegs = teamIds.length > 0
+      ? await this.prisma.tournamentRegistration.findMany({
+          where: {
+            tournamentId: { in: tournamentIds },
+            teamId: { in: teamIds },
+            status: RegistrationStatus.CONFIRMED,
+          },
+        })
+      : [];
+
+    // Compute waitlist positions
+    const waitlistedEntries = userTeams.flatMap((tm) => tm.waitlistEntries);
+    const positionMap = new Map<string, number>();
+    for (const entry of waitlistedEntries) {
+      const earlierCount = await this.prisma.tournamentWaitlistEntry.count({
+        where: {
+          tournamentId: entry.tournamentId,
+          status: WaitlistEntryStatus.WAITING,
+          createdAt: { lt: entry.createdAt },
+        },
+      });
+      positionMap.set(entry.id, earlierCount + 1);
+    }
+
+    for (const t of tournaments) {
+      const userTeam = userTeams.find((tm) => tm.tournamentId === t.id);
+      const teamReg = teamRegs.find((tr) => tr.tournamentId === t.id && tr.teamId === userTeam?.id);
+      const soloReg = soloRegs.find((sr) => sr.tournamentId === t.id);
+
+      let myReg: any = null;
+      if (userTeam) {
+        const activeSub = userTeam.registrationSubmissions?.[0];
+        const approvalsRequired = activeSub?.approvals?.length ?? 0;
+        const approvalsApproved = activeSub?.approvals?.filter((a) => a.status === 'APPROVED').length ?? 0;
+        const myApp = activeSub?.approvals?.find((a) => a.userId === currentUserId && a.status === 'PENDING');
+
+        const myMember = userTeam.members.find((m) => m.userId === currentUserId);
+        let myRole: any = null;
+        if (userTeam.captainId === currentUserId) {
+          myRole = userTeam.ownerRole === OwnerRole.MANAGER ? 'MANAGER' : 'LEADER';
+        } else if (myMember) {
+          myRole = myMember.role;
+        }
+
+        let isPlaying = false;
+        if (activeSub && activeSub.playingUserIds) {
+          isPlaying = activeSub.playingUserIds.includes(currentUserId);
+        } else if (myMember) {
+          isPlaying = myMember.role !== TeamMemberRole.SUBSTITUTE && myMember.role !== TeamMemberRole.MANAGER;
+        }
+
+        const waitlistPos = userTeam.registrationState === 'WAITLISTED'
+          ? (userTeam.waitlistEntries[0] ? positionMap.get(userTeam.waitlistEntries[0].id) ?? 1 : 1)
+          : null;
+
+        myReg = {
+          state: userTeam.registrationState,
+          team_id: userTeam.id,
+          slot_number: teamReg?.slotNumber ?? null,
+          waitlist_position: waitlistPos,
+          approvals_required: approvalsRequired,
+          approvals_approved: approvalsApproved,
+          my_pending_approval_id: myApp ? myApp.id : null,
+          my_role: myRole,
+          is_playing: isPlaying,
+        };
+      } else if (soloReg) {
+        myReg = {
+          state: soloReg.status,
+          team_id: null,
+          slot_number: soloReg.slotNumber,
+          waitlist_position: null,
+          approvals_required: 0,
+          approvals_approved: 0,
+          my_pending_approval_id: null,
+          my_role: 'SOLO',
+          is_playing: true,
+        };
+      }
+
+      t.myRegistration = myReg;
+    }
+
+    return tournaments;
   }
 }
