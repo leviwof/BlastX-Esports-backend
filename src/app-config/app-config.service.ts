@@ -4,12 +4,29 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { UpdateConfigDto } from './dto/update-config.dto';
 
+export interface RecordingConfig {
+  video_bitrate_kbps: number;
+  max_height: number;
+  fps: number;
+  max_duration_minutes: number;
+  min_free_space_mb: number;
+}
+
+export const DEFAULT_RECORDING_CONFIG: RecordingConfig = {
+  video_bitrate_kbps: 2500,
+  max_height: 720,
+  fps: 30,
+  max_duration_minutes: 60,
+  min_free_space_mb: 1500,
+};
+
 export interface AppConfigResponse {
   min_version: string;
   latest_version: string;
   is_maintenance: boolean;
   maintenance_message: string;
   update_url: string;
+  recording: RecordingConfig;
 }
 
 @Injectable()
@@ -37,12 +54,22 @@ export class AppConfigService {
       }
     }
 
+    const rawRec = (config.recordingConfig as any) || {};
+    const recording: RecordingConfig = {
+      video_bitrate_kbps: Number(rawRec.video_bitrate_kbps ?? DEFAULT_RECORDING_CONFIG.video_bitrate_kbps),
+      max_height: Number(rawRec.max_height ?? DEFAULT_RECORDING_CONFIG.max_height),
+      fps: Number(rawRec.fps ?? DEFAULT_RECORDING_CONFIG.fps),
+      max_duration_minutes: Number(rawRec.max_duration_minutes ?? DEFAULT_RECORDING_CONFIG.max_duration_minutes),
+      min_free_space_mb: Number(rawRec.min_free_space_mb ?? DEFAULT_RECORDING_CONFIG.min_free_space_mb),
+    };
+
     return {
       min_version: config.minVersion,
       latest_version: config.latestVersion,
       is_maintenance: config.isMaintenance,
       maintenance_message: config.maintenanceMessage,
       update_url: config.updateUrl,
+      recording,
     };
   }
 
@@ -80,12 +107,22 @@ export class AppConfigService {
       // Ignore cache invalidation failure
     }
 
+    const rawRec = (config.recordingConfig as any) || {};
+    const recording: RecordingConfig = {
+      video_bitrate_kbps: Number(rawRec.video_bitrate_kbps ?? DEFAULT_RECORDING_CONFIG.video_bitrate_kbps),
+      max_height: Number(rawRec.max_height ?? DEFAULT_RECORDING_CONFIG.max_height),
+      fps: Number(rawRec.fps ?? DEFAULT_RECORDING_CONFIG.fps),
+      max_duration_minutes: Number(rawRec.max_duration_minutes ?? DEFAULT_RECORDING_CONFIG.max_duration_minutes),
+      min_free_space_mb: Number(rawRec.min_free_space_mb ?? DEFAULT_RECORDING_CONFIG.min_free_space_mb),
+    };
+
     return {
       min_version: config.minVersion,
       latest_version: config.latestVersion,
       is_maintenance: config.isMaintenance,
       maintenance_message: config.maintenanceMessage,
       update_url: config.updateUrl,
+      recording,
     };
   }
 }

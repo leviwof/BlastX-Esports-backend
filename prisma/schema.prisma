@@ -123,6 +123,14 @@ enum MatchStatus {
   COMPLETED
 }
 
+enum RecordingStatus {
+  PENDING_UPLOAD
+  UPLOADING
+  UPLOADED
+  FAILED
+  REJECTED
+}
+
 model User {
   id                 String    @id @default(cuid())
   name               String
@@ -158,6 +166,7 @@ model User {
   notifications             Notification[]
   teamJoinRequests          TeamJoinRequest[]
   registrationApprovals     RegistrationApproval[]
+  matchRecordings           MatchRecording[]
 
   @@index([fcmToken], map: "users_fcm_token_idx")
   @@map("users")
@@ -170,6 +179,7 @@ model AppConfig {
   isMaintenance      Boolean @default(false) @map("is_maintenance")
   maintenanceMessage String  @map("maintenance_message")
   updateUrl          String  @map("update_url")
+  recordingConfig    Json?   @map("recording_config")
 
   @@map("app_config")
 }
@@ -236,6 +246,7 @@ model Team {
   registrationSubmissions RegistrationSubmission[]
   registrationEvents      RegistrationEvent[]
   waitlistEntries         TournamentWaitlistEntry[]
+  matchRecordings         MatchRecording[]
 
   @@unique([gameId, tournamentId, name], name: "unique_game_tournament_team_name")
   @@unique([tournamentId, persistentSquadId], name: "unique_tournament_persistent_squad")
@@ -402,6 +413,7 @@ model Tournament {
   registrationSubmissions RegistrationSubmission[]
   registrationEvents      RegistrationEvent[]
   waitlistEntries         TournamentWaitlistEntry[]
+  matchRecordings         MatchRecording[]
 
   // NEW fields for format engine
   registrationUnitCount  Int?                  @map("registration_unit_count")
@@ -1015,4 +1027,48 @@ model Notification {
 
   @@index([userId, createdAt(sort: Desc)])
   @@map("notifications")
+}
+
+model MatchRecording {
+  id                     String          @id @default(cuid())
+  clientRecordingId      String          @map("client_recording_id")
+  tournamentId           String          @map("tournament_id")
+  teamId                 String?         @map("team_id")
+  userId                 String          @map("user_id")
+  matchKey               String          @map("match_key")
+  matchId                String?         @map("match_id")
+  groupId                String?         @map("group_id")
+  status                 RecordingStatus @default(PENDING_UPLOAD)
+  storageProvider        String?         @map("storage_provider")
+  storageFileId          String?         @map("storage_file_id")
+  fileUrl                String?         @map("file_url")
+  sizeBytes              BigInt?         @map("size_bytes")
+  uploadedBytes          BigInt          @default(0) @map("uploaded_bytes")
+  durationSeconds        Int?            @map("duration_seconds")
+  mimeType               String?         @map("mime_type")
+  resolution             String?
+  startedAt              DateTime        @map("started_at")
+  stoppedAt              DateTime        @map("stopped_at")
+  deviceModel            String?         @map("device_model")
+  appVersion             String?         @map("app_version")
+  failureReason          String?         @map("failure_reason")
+  uploadSessionExpiresAt DateTime?       @map("upload_session_expires_at")
+  keep                   Boolean         @default(false)
+  deletedAt              DateTime?       @map("deleted_at")
+  createdAt              DateTime        @default(now()) @map("created_at")
+  uploadedAt             DateTime?       @map("uploaded_at")
+  reviewedBy             String?         @map("reviewed_by")
+  reviewedAt             DateTime?       @map("reviewed_at")
+  reviewNote             String?         @map("review_note")
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team       Team?      @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, clientRecordingId])
+  @@unique([userId, matchKey])
+  @@index([tournamentId, matchKey])
+  @@index([tournamentId, status])
+  @@index([teamId])
+  @@map("match_recordings")
 }

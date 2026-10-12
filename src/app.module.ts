@@ -27,6 +27,7 @@ import { GamesModule } from './games/games.module';
 import { SquadsModule } from './squads/squads.module';
 import { PartnersModule } from './partners/partners.module';
 import { SupportModule } from './support/support.module';
+import { RecordingsModule } from './recordings/recordings.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { SupportModule } from './support/support.module';
     TeamsModule,
     TournamentsModule,
     MatchesModule,
+    RecordingsModule,
     ChallengesModule,
     AdminStatsModule,
     ContentModule,

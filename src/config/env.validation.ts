@@ -20,4 +20,5 @@ export const envValidationSchema = Joi.object({
 
   PAID_TOURNAMENTS_ENABLED: Joi.boolean().default(false),
   ROOM_RELEASE_MINUTES: Joi.number().default(15),
+  RECORDING_RETENTION_DAYS: Joi.number().default(30),
 }).and('ADMIN_LOGIN_EMAIL', 'ADMIN_LOGIN_PASSWORD');

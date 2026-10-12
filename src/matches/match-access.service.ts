@@ -115,7 +115,13 @@ export interface MatchCenterMatch {
     kills: number;
     total_points: number;
   } | null;
-  recording_status: 'NONE';
+  recording_status:
+    | 'NONE'
+    | 'PENDING_UPLOAD'
+    | 'UPLOADING'
+    | 'UPLOADED'
+    | 'FAILED'
+    | 'REJECTED';
 }
 
 export interface MatchCenterRound {
@@ -149,7 +155,13 @@ export interface MatchDetailResponse {
     kills: number;
     total_points: number;
   } | null;
-  recording_status: 'NONE';
+  recording_status:
+    | 'NONE'
+    | 'PENDING_UPLOAD'
+    | 'UPLOADING'
+    | 'UPLOADED'
+    | 'FAILED'
+    | 'REJECTED';
 }
 
 @Injectable()
@@ -764,38 +776,47 @@ export class MatchAccessService {
       throw new NotFoundException('Tournament not found');
     }
 
-    // Batch query: rounds, match units, qualifications, and official results
-    const [units, qualifications, groupTeams, userResults] = await Promise.all([
-      this.listMatchUnits(tournamentId),
-      myAccess.team
-        ? this.prisma.roundQualification.findMany({
-            where: {
-              tournamentTeamId: myAccess.team.id,
-              round: { tournamentId },
-            },
-            include: { round: true },
-            orderBy: { createdAt: 'desc' },
-          })
-        : Promise.resolve([] as any[]),
-      myAccess.team
-        ? this.prisma.tournamentGroupTeam.findMany({
-            where: {
-              tournamentTeamId: myAccess.team.id,
-              group: { round: { tournamentId } },
-            },
-            include: {
-              group: { include: { round: true } },
-            },
-          })
-        : Promise.resolve([] as any[]),
-      this.prisma.matchResult.findMany({
-        where: {
-          registrationId: myAccess.registration.id,
-          match: { tournamentId },
-        },
-        include: { match: true },
-      }),
-    ]);
+    // Batch query: rounds, match units, qualifications, official results, and recordings
+    const [units, qualifications, groupTeams, userResults, userRecordings] =
+      await Promise.all([
+        this.listMatchUnits(tournamentId),
+        myAccess.team
+          ? this.prisma.roundQualification.findMany({
+              where: {
+                tournamentTeamId: myAccess.team.id,
+                round: { tournamentId },
+              },
+              include: { round: true },
+              orderBy: { createdAt: 'desc' },
+            })
+          : Promise.resolve([] as any[]),
+        myAccess.team
+          ? this.prisma.tournamentGroupTeam.findMany({
+              where: {
+                tournamentTeamId: myAccess.team.id,
+                group: { round: { tournamentId } },
+              },
+              include: {
+                group: { include: { round: true } },
+              },
+            })
+          : Promise.resolve([] as any[]),
+        this.prisma.matchResult.findMany({
+          where: {
+            registrationId: myAccess.registration.id,
+            match: { tournamentId },
+          },
+          include: { match: true },
+        }),
+        this.prisma.matchRecording?.findMany
+          ? this.prisma.matchRecording.findMany({
+              where: {
+                tournamentId,
+                userId,
+              },
+            })
+          : Promise.resolve([] as any[]),
+      ]);
 
     const groupTeamsList: any[] = groupTeams as any[];
 
@@ -938,6 +959,11 @@ export class MatchAccessService {
         }
       }
 
+      const userRec = (userRecordings as any[]).find(
+        (rec) => rec.matchKey === unit.matchKey,
+      );
+      const recordingStatus = userRec ? userRec.status : 'NONE';
+
       rnd.matches.push({
         match_key: unit.matchKey,
         match_number: unit.matchNumber,
@@ -948,7 +974,7 @@ export class MatchAccessService {
         room_state: roomState,
         room_reveal_at: roomRevealAt,
         my_result: myResult,
-        recording_status: 'NONE',
+        recording_status: recordingStatus,
       });
     }
 
@@ -997,7 +1023,10 @@ export class MatchAccessService {
               ? defaultCreds.releasedAt.toISOString()
               : null,
             my_result: null,
-            recording_status: 'NONE',
+            recording_status:
+              ((userRecordings as any[]).find(
+                (rec) => rec.matchKey === `t_${tournament.id}`,
+              )?.status as any) || 'NONE',
           },
         ],
       });
@@ -1121,6 +1150,17 @@ export class MatchAccessService {
       }
     }
 
+    const userRec = this.prisma.matchRecording?.findFirst
+      ? await this.prisma.matchRecording.findFirst({
+          where: {
+            tournamentId,
+            matchKey,
+            userId,
+          },
+        })
+      : null;
+    const recordingStatus = userRec ? userRec.status : 'NONE';
+
     return {
       match_key: unit.matchKey,
       match_number: unit.matchNumber,
@@ -1132,7 +1172,7 @@ export class MatchAccessService {
       room_state: roomState,
       room_reveal_at: roomRevealAt,
       my_result: myResult,
-      recording_status: 'NONE',
+      recording_status: recordingStatus,
     };
   }
 

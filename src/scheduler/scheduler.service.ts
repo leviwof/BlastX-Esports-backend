@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { MatchStatus, TournamentInvitationStatus, TournamentStatus, WaitlistEntryStatus } from '@prisma/client';
 import { Queue, Worker } from 'bullmq';
 import * as net from 'net';
+import { RecordingsService } from '../recordings/recordings.service';
 
 @Injectable()
 export class SchedulerService implements OnModuleInit, OnModuleDestroy {
@@ -17,6 +18,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
     private readonly config: ConfigService,
+    private readonly recordingsService?: RecordingsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -302,6 +304,11 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       if (t.registeredCount < t.maxSlots) {
         this.eventEmitter.emit('tournament.slot_freed', { tournamentId: t.id });
       }
+    }
+
+    // Task 4: Clean up expired match recordings for completed tournaments
+    if (this.recordingsService) {
+      await this.recordingsService.cleanExpiredRecordings();
     }
   } catch (err: any) {
     this.logger.error(`[SCHEDULER] Lifecycle check error: ${err.message}`, err.stack);
