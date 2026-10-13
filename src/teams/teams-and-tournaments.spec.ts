@@ -150,6 +150,9 @@ describe('Teams & Tournaments Features', () => {
         create: jest.fn().mockResolvedValue({}),
         findMany: jest.fn(),
       },
+      tournamentAuditLog: {
+        create: jest.fn().mockResolvedValue({}),
+      },
       $transaction: jest.fn(async (cbOrArr, options) => {
         if (typeof cbOrArr === 'function') {
           return cbOrArr(mockPrisma);
@@ -1572,6 +1575,10 @@ describe('Teams & Tournaments Features', () => {
       expect(res.all_approved).toBe(true);
       expect(res.registration_state).toBe('CONFIRMED');
       expect(res.slot_number).toBe(5);
+      expect(mockPrisma.$transaction).toHaveBeenLastCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ maxWait: 10_000, timeout: 30_000 }),
+      );
       expect(mockPrisma.team.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: { registrationState: TeamRegistrationState.CONFIRMED } }),
       );

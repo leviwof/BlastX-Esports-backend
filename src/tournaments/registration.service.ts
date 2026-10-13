@@ -25,6 +25,12 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterTournamentDto } from './dto/register-tournament.dto';
 
+const REGISTRATION_TRANSACTION_OPTIONS = {
+  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  maxWait: 10_000,
+  timeout: 30_000,
+};
+
 @Injectable()
 export class RegistrationService {
   constructor(
@@ -520,7 +526,7 @@ export class RegistrationService {
           const res = await this.finalizeRegistration(tx, tournamentId, null, userId);
           return res.registration;
         },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        REGISTRATION_TRANSACTION_OPTIONS,
       );
     }
 
@@ -725,7 +731,7 @@ export class RegistrationService {
             slot_number: res.slotNumber,
           };
         },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        REGISTRATION_TRANSACTION_OPTIONS,
       );
     }
 
@@ -792,7 +798,7 @@ export class RegistrationService {
           approvals: createdApprovals,
         };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      REGISTRATION_TRANSACTION_OPTIONS,
     );
 
     // Emit approval requests after commit
@@ -1301,7 +1307,7 @@ export class RegistrationService {
           newRosterVersion,
         };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      REGISTRATION_TRANSACTION_OPTIONS,
     );
 
     // Emit approval response notification to owner
