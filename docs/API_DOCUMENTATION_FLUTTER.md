@@ -340,14 +340,19 @@ The admin queue refreshes automatically while open.
 
 ## 4. Live Tournaments & Teams Section APIs
 
-### 4.1 Get Tournaments List
+> **Catalog Separation Note**:
+> - **BlastX Tournaments**: Query `GET /tournaments` (or `GET /tournaments?section=BLASTX`). Tournaments created for BlastX belong exclusively to this catalog and have `"section": "BLASTX"`.
+> - **Free Fire Live Tournaments**: Query the dedicated `GET /free-fire-live` endpoint (or `GET /tournaments?section=FREEFIRE_LIVE`). This ensures BlastX tournaments never leak into the Free Fire Live tab.
+
+### 4.1 Get Tournaments List (BlastX Platform Catalog)
 - **Method**: `GET`
 - **Endpoint**: `/tournaments`
 - **Query Parameters**:
   - `page` (int, default: `1`)
   - `limit` (int, default: `50`)
+  - `section` (string, optional: `BLASTX` or `FREEFIRE_LIVE`. Default: `BLASTX`)
   - `status` (string, optional: `live`, `upcoming`, `completed`)
-  - `game` (string, optional: `Free Fire`)
+  - `game` (string, optional: `Free Fire`, `BlastX`)
   - `team_mode` (string, optional: `SQUAD`, `DUO`, `SOLO`)
 - **Response `200 OK`**:
 ```json
@@ -375,6 +380,44 @@ The admin queue refreshes automatically while open.
     "limit": 50,
     "total": 1
   }
+}
+```
+
+---
+
+### 4.1B Get Dedicated Free Fire Live Tournaments (Mobile Free Fire Live Tab)
+- **Method**: `GET`
+- **Endpoint**: `/free-fire-live` (or `/v1/free-fire-live`)
+- **Query Parameters**:
+  - `page` (int, default: `1`)
+  - `limit` (int, default: `20`)
+  - `status` (string, optional: `live`, `upcoming`, `completed`)
+- **Description**: Exclusively queries and returns tournaments from the dedicated **Free Fire Live** catalog (`section: "FREEFIRE_LIVE"`). BlastX tournaments never appear in this response.
+- **Response `200 OK`**:
+```json
+{
+  "status": "success",
+  "page": 1,
+  "limit": 20,
+  "total": 1,
+  "next_cursor": null,
+  "items": [
+    {
+      "id": "tourney_ff_001",
+      "title": "Free Fire Squad Championship",
+      "game": "Free Fire",
+      "banner_url": "https://storage.blastx.com/banners/tourney_ff.jpg",
+      "prize_pool": 50000,
+      "status": "REGISTRATION_OPEN",
+      "starts_at": "2026-10-15T16:49:43.322Z",
+      "team_mode": "SQUAD",
+      "map": "BERMUDA",
+      "format": "BATTLE_ROYALE",
+      "max_slots": 48,
+      "registered_count": 0,
+      "slots_left": 48
+    }
+  ]
 }
 ```
 

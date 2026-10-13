@@ -13,7 +13,14 @@ import { Transform } from 'class-transformer';
 export class FilterTournamentQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(TournamentSection)
-  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      const upper = value.toUpperCase().trim();
+      if (upper === 'FREEFIRE' || upper === 'FREE_FIRE') return TournamentSection.FREEFIRE_LIVE;
+      return upper;
+    }
+    return value;
+  })
   section?: TournamentSection;
 
   @IsOptional()

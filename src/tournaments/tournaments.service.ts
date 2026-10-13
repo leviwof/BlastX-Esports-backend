@@ -521,22 +521,34 @@ export class TournamentsService implements OnModuleInit {
     }
 
     if (dto.team_mode) where.teamMode = dto.team_mode;
-    // The two app experiences are intentionally separate catalogs.  The
-    // general tournament endpoint must never leak Free Fire Live events.
-    where.section = requiredSection ?? dto.section ?? TournamentSection.BLASTX;
+    // The two app experiences are intentionally separate catalogs. The
+    // general public tournament endpoint defaults to BLASTX to never leak
+    // Free Fire Live events, while allowing explicit section filtering.
+    if (requiredSection) {
+      where.section = requiredSection;
+    } else if (dto.section) {
+      where.section = dto.section;
+    } else if (!includeNonPublic) {
+      where.section = TournamentSection.BLASTX;
+    }
+
     if (dto.format) where.format = dto.format;
     if (dto.map) where.map = { contains: dto.map, mode: 'insensitive' };
 
     // Game filter
     if (dto.game || dto.game_slug) {
       const g = (dto.game_slug || dto.game)!.trim();
-      where.game = {
-        OR: [
-          { slug: { equals: g, mode: 'insensitive' } },
-          { name: { equals: g, mode: 'insensitive' } },
-          { name: { contains: g, mode: 'insensitive' } },
-        ],
-      };
+      if (/^blastx$/i.test(g)) {
+        where.section = TournamentSection.BLASTX;
+      } else {
+        where.game = {
+          OR: [
+            { slug: { equals: g, mode: 'insensitive' } },
+            { name: { equals: g, mode: 'insensitive' } },
+            { name: { contains: g, mode: 'insensitive' } },
+          ],
+        };
+      }
     }
 
     // Full-text search (title + organizer name)
@@ -559,7 +571,8 @@ export class TournamentsService implements OnModuleInit {
     // show totals for the full game, not just the current filtered subset).
     const countsWhere: any = { status: { in: TournamentsService.PUBLIC_STATUSES } };
     if (where.game) countsWhere.game = where.game;
-    countsWhere.section = requiredSection ?? dto.section ?? TournamentSection.BLASTX;
+    if (where.section) countsWhere.section = where.section;
+    else if (!includeNonPublic) countsWhere.section = TournamentSection.BLASTX;
 
     const items = await this.prisma.tournament.findMany({
       where,
