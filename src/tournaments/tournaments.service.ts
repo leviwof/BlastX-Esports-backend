@@ -457,8 +457,77 @@ export class TournamentsService implements OnModuleInit {
   async deleteTournament(adminId: string, tournamentId: string): Promise<{ success: true; message: string; id: string }> {
     const tournament = await this.getTournamentEntity(tournamentId);
 
-    await this.prisma.tournament.delete({
-      where: { id: tournamentId },
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Delete match results for matches in this tournament
+      const matches = await tx.match.findMany({ where: { tournamentId }, select: { id: true } });
+      const matchIds = matches.map((m) => m.id);
+      if (matchIds.length > 0) {
+        await tx.matchResult.deleteMany({ where: { matchId: { in: matchIds } } });
+      }
+
+      // 2. Delete recordings & matches
+      await tx.matchRecording.deleteMany({ where: { tournamentId } });
+      await tx.match.deleteMany({ where: { tournamentId } });
+
+      // 3. Delete format plans
+      await tx.tournamentFormatPlan.deleteMany({ where: { tournamentId } });
+
+      // 4. Delete tie breakers, group teams, groups, qualifications, rounds
+      const rounds = await tx.tournamentRound.findMany({ where: { tournamentId }, select: { id: true } });
+      const roundIds = rounds.map((r) => r.id);
+      if (roundIds.length > 0) {
+        await tx.tournamentTieBreaker.deleteMany({ where: { roundId: { in: roundIds } } });
+        await tx.roundQualification.deleteMany({ where: { roundId: { in: roundIds } } });
+        const groups = await tx.tournamentGroup.findMany({ where: { roundId: { in: roundIds } }, select: { id: true } });
+        const groupIds = groups.map((g) => g.id);
+        if (groupIds.length > 0) {
+          await tx.tournamentGroupTeam.deleteMany({ where: { groupId: { in: groupIds } } });
+          await tx.tournamentGroup.deleteMany({ where: { id: { in: groupIds } } });
+        }
+        await tx.tournamentRound.deleteMany({ where: { id: { in: roundIds } } });
+      }
+
+      // 5. Delete wild card slots and windows
+      const wildcards = await tx.wildCardWindow.findMany({ where: { tournamentId }, select: { id: true } });
+      const wcIds = wildcards.map((w) => w.id);
+      if (wcIds.length > 0) {
+        await tx.wildCardSlot.deleteMany({ where: { windowId: { in: wcIds } } });
+        await tx.wildCardWindow.deleteMany({ where: { tournamentId } });
+      }
+
+      // 6. Delete registration submissions & approvals & events
+      const submissions = await tx.registrationSubmission.findMany({ where: { tournamentId }, select: { id: true } });
+      const subIds = submissions.map((s) => s.id);
+      if (subIds.length > 0) {
+        await tx.registrationApproval.deleteMany({ where: { submissionId: { in: subIds } } });
+        await tx.registrationSubmission.deleteMany({ where: { tournamentId } });
+      }
+      await tx.registrationEvent.deleteMany({ where: { tournamentId } });
+
+      // 7. Delete waitlist entries and waitlists
+      await tx.tournamentWaitlistEntry.deleteMany({ where: { tournamentId } });
+      await tx.tournamentWaitlist.deleteMany({ where: { tournamentId } });
+
+      // 8. Delete invitations & registrations
+      await tx.tournamentInvitation.deleteMany({ where: { tournamentId } });
+      await tx.tournamentRegistration.deleteMany({ where: { tournamentId } });
+
+      // 9. Delete teams created specifically for this tournament
+      const teams = await tx.team.findMany({ where: { tournamentId }, select: { id: true } });
+      const teamIds = teams.map((t) => t.id);
+      if (teamIds.length > 0) {
+        await tx.teamMember.deleteMany({ where: { teamId: { in: teamIds } } });
+        await tx.teamJoinRequest.deleteMany({ where: { teamId: { in: teamIds } } });
+        await tx.team.deleteMany({ where: { id: { in: teamIds } } });
+      }
+
+      // 10. Delete audit logs
+      await tx.tournamentAuditLog.deleteMany({ where: { tournamentId } });
+
+      // 11. Delete the tournament itself
+      await tx.tournament.delete({
+        where: { id: tournamentId },
+      });
     });
 
     return {
