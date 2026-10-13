@@ -497,6 +497,43 @@ describe('Section 5: Match Center & Room Credentials Access Control', () => {
     });
   });
 
+  describe('5b. Single-lobby match-center room key', () => {
+    it('accepts the t_<tournamentId> key emitted when no match unit exists', async () => {
+      const tournamentId = 'tourn-single-lobby';
+      const startsAt = new Date(Date.now() + 60 * 60 * 1000);
+      mockPrisma.tournament.findUnique.mockResolvedValue({
+        id: tournamentId,
+        map: 'Bermuda',
+        status: TournamentStatus.LIVE,
+        startsAt,
+        roomId: 'TOURNAMENT_ROOM',
+        roomPassword: 'TOURNAMENT_PASSWORD',
+        roomReleasedAt: new Date(Date.now() - 60 * 1000),
+      });
+      jest.spyOn(matchAccessService, 'listMatchUnits').mockResolvedValue([]);
+      jest.spyOn(matchAccessService, 'getMyAccess').mockResolvedValue({
+        registration: { id: 'reg-single', status: RegistrationStatus.CONFIRMED },
+        team: null,
+        role: 'PLAYER',
+        access: 'PLAYING',
+        isEliminated: false,
+        isDisqualified: false,
+      } as any);
+
+      await expect(
+        matchAccessService.assertCanSeeCredentials(
+          'user-single',
+          `t_${tournamentId}`,
+          tournamentId,
+        ),
+      ).resolves.toMatchObject({
+        room_id: 'TOURNAMENT_ROOM',
+        room_password: 'TOURNAMENT_PASSWORD',
+        scheduled_at: startsAt,
+      });
+    });
+  });
+
   // =========================================================================
   // Test 6: SOLO, DUO, and SQUAD playing set resolution
   // =========================================================================

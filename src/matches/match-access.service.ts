@@ -617,6 +617,28 @@ export class MatchAccessService {
       }
     }
 
+    // A single-lobby tournament has no Match or TournamentGroup row. Its
+    // match-center entry deliberately uses the stable `t_<tournamentId>`
+    // key, so treat it as a virtual match unit instead of rejecting it as an
+    // unknown `m_`/`g_` key. This keeps the room endpoint usable before a
+    // bracket or match record has been generated.
+    if (!matchUnit && targetTournamentId && matchKey === `t_${targetTournamentId}`) {
+      matchUnit = {
+        matchKey,
+        tournamentId: targetTournamentId,
+        groupName: 'Group 1',
+        roundKey: 'round_1',
+        roundName: 'Round 1 - Qualifiers',
+        matchNumber: 1,
+        map: 'Bermuda',
+        status: 'SCHEDULED',
+        scheduledAt: new Date(),
+        participatingTeamIds: null,
+        participatingRegIds: [],
+        results: [],
+      };
+    }
+
     if (!matchUnit || !targetTournamentId) {
       throw new HttpException(
         { code: 'MATCH_NOT_FOUND', message: `Match '${matchKey}' not found` },
@@ -632,6 +654,12 @@ export class MatchAccessService {
         { code: 'MATCH_NOT_FOUND', message: 'Tournament not found' },
         HttpStatus.NOT_FOUND,
       );
+    }
+
+    if (matchUnit.matchKey === `t_${targetTournamentId}`) {
+      matchUnit.map = tournament.map || 'Bermuda';
+      matchUnit.status = tournament.status;
+      matchUnit.scheduledAt = tournament.startsAt;
     }
 
     // 2. Validate user registration and access
